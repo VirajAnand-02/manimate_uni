@@ -1,0 +1,8 @@
+{
+  "name": "Manimate - AI Video Course Creator",
+  "description": "A premium AI platform that generates full educational video courses from simple text prompts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
