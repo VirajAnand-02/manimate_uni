@@ -1,7 +1,4 @@
-import path from 'path';
 import type { LocalStageProgress, StageName } from '@/src/types/manimate';
-
-export const GENERATIONS_DIR = path.join(process.cwd(), 'generations');
 
 export const STAGE_NAMES: StageName[] = [
   'web_research',

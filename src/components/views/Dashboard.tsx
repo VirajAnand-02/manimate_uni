@@ -6,6 +6,7 @@ import { Sparkles, Clock, ChevronDown, ChevronUp, Wifi, WifiOff, Settings2, Zap 
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import { useRouter } from 'next/navigation';
+import { redirectToLogin } from '@/src/lib/authRedirect';
 
 interface HealthInfo {
   status: string;
@@ -103,6 +104,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (res.status === 401) return redirectToLogin();
       if (res.ok) {
         const data = await res.json();
         router.push(`/studio/${data.jobId}`);

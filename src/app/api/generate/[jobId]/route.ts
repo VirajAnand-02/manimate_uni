@@ -1,28 +1,31 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs/promises';
-import path from 'path';
-import type { LocalMetadata } from '@/src/types/manimate';
 import { cancelActiveJob } from '@/src/lib/manimate/activeJobs';
+import { deleteJob, patchMetadata, readMetadata } from '@/src/lib/manimate/jobStore';
+import { removeJobArtifacts } from '@/src/lib/manimate/storage';
+import { removeJobWorkDir, isValidJobId } from '@/src/lib/manimate/workspace';
+import { createClient } from '@/src/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-const GENERATIONS_DIR = path.join(process.cwd(), 'generations');
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
-  const metadataPath = path.join(GENERATIONS_DIR, jobId, 'metadata.json');
-
-  try {
-    const content = await fs.readFile(metadataPath, 'utf-8');
-    return NextResponse.json(JSON.parse(content));
-  } catch (err) {
-    console.error('Get job details error:', err);
-    return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  if (!isValidJobId(jobId)) {
+    return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  // RLS returns nothing for another user's job, so this 404s rather than leaking.
+  const metadata = await readMetadata(jobId, supabase);
+  if (!metadata) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+
+  return NextResponse.json(metadata);
 }
 
 export async function DELETE(
@@ -30,42 +33,49 @@ export async function DELETE(
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
+  if (!isValidJobId(jobId)) {
+    return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
   const { searchParams } = new URL(request.url);
   const discard = searchParams.get('discard') === 'true';
 
-  const metadataPath = path.join(GENERATIONS_DIR, jobId, 'metadata.json');
-  const jobDirPath = path.join(GENERATIONS_DIR, jobId);
-
   try {
+    const metadata = await readMetadata(jobId, supabase);
+    if (!metadata) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+
     cancelActiveJob(jobId);
 
     if (discard) {
-      await fs.rm(jobDirPath, { recursive: true, force: true });
+      await removeJobArtifacts(user.id, jobId);
+      await removeJobWorkDir(jobId);
+      await deleteJob(jobId, supabase);
       return new Response(null, { status: 204 });
     }
 
-    const content = await fs.readFile(metadataPath, 'utf-8');
-    const metadata = JSON.parse(content) as LocalMetadata;
-
-    // If job is already terminal, no-op
     if (metadata.status === 'completed' || metadata.status === 'failed') {
-      return NextResponse.json(
-        { message: `Job already ${metadata.status}` },
-        { status: 200 }
-      );
+      return NextResponse.json({ message: `Job already ${metadata.status}` }, { status: 200 });
     }
 
-    // Update local metadata
-    metadata.status = 'failed';
-    metadata.error = 'Job cancelled by user';
-    metadata.finished_at = new Date().toISOString();
-    metadata.updated_at = new Date().toISOString();
-    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    await patchMetadata(
+      jobId,
+      {
+        status: 'failed',
+        current_stage: null,
+        error: 'Job cancelled by user',
+        finished_at: new Date().toISOString(),
+      },
+      supabase,
+    );
 
     return new Response(null, { status: 204 });
   } catch (err) {
     console.error('Cancel job error:', err);
-    return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+    const message = err instanceof Error ? err.message : 'Failed to cancel job';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

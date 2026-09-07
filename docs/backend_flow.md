@@ -1,45 +1,50 @@
 # Backend Architecture and Data Flow
 
-This document details the backend flow of the Manimate Uni application, covering Next.js API routing, local concurrency queue management, active subprocess lifecycle control via AbortControllers, and the JSON-based file storage system.
+This document details the backend flow of the Manimate Uni application, covering Next.js API routing, authentication, local concurrency queue management, active subprocess lifecycle control via AbortControllers, and the Supabase persistence layer.
 
 ---
 
 ## 1. Next.js API Route Architecture
 
-The backend of Manimate Uni is built using Next.js Route Handlers. All API endpoints run inside a Node.js server environment and interact with the file system and local processes.
+The backend of Manimate Uni is built using Next.js Route Handlers. All API endpoints run inside a Node.js server environment and interact with Supabase, the scratch file system, and local processes.
+
+**Every endpoint requires an authenticated session.** Handlers resolve the caller via `createClient()` (`src/lib/supabase/server.ts`) and answer `401` when there is none. Reads and writes go through that request-scoped client, so Row Level Security on `public.jobs` — not hand-written checks — is what stops one user reaching another's job. `jobId` is validated as a UUID (`isValidJobId`) before use.
 
 ### Job Generation Endpoints
 
-#### `GET` [/api/generate](file:///E:/programming/manimate-uni/src/app/api/generate/route.ts)
+#### `GET` [/api/generate](file://./src/app/api/generate/route.ts)
 - **Purpose**: Lists all generated animation jobs stored in the local file system.
 - **Workflow**:
-  1. Invokes [listJobs()](file:///E:/programming/manimate-uni/src/lib/manimate/jobStore.ts#L43-L53) to scan the workspace-level `generations/` directory.
-  2. Reads each job's `metadata.json`.
-  3. Sorts all detected jobs by their creation timestamp (`created_at`) in descending order (newest first) and returns the list as JSON.
+  1. Invokes `listJobs()` with the request-scoped client.
+  2. RLS limits the result to the caller's own rows; Postgres sorts by `created_at` descending.
+  3. Returns the list as JSON.
 
-#### `POST` [/api/generate](file:///E:/programming/manimate-uni/src/app/api/generate/route.ts)
+#### `POST` [/api/generate](file://./src/app/api/generate/route.ts)
 - **Purpose**: Creates and triggers a new animation generation job.
 - **Workflow**:
-  1. Validates that a non-empty `topic` string is present in the request body.
-  2. Resolves optional fields (e.g., model provider, model overrides, topic depth, Max correction attempts) via a custom payload builder.
-  3. Generates a unique UUID `jobId` using `crypto.randomUUID()`.
-  4. Writes the initial job state file using [createInitialMetadata()](file:///E:/programming/manimate-uni/src/lib/manimate/jobStore.ts#L55-L76), setting the overall progress to `0%` and current stage to `web_research`.
-  5. Spawns [runPipeline()](file:///E:/programming/manimate-uni/src/lib/manimate/pipeline.ts#L91-L318) asynchronously.
-  6. Immediately responds to the client with an HTTP `202 Accepted` status along with the `jobId`. The actual pipeline processing runs in the background.
+  1. Resolves the caller; answers `401` if there is no session.
+  2. Validates that a non-empty `topic` string is present in the request body.
+  3. Resolves optional fields (model provider, model override, topic depth, max correction attempts) via a payload builder. `render_dir`, `manim_python` and `tts_output_dir` are **not** accepted — the first two were never read, and the third was a caller-controlled write path.
+  4. Generates a UUID `jobId` using `crypto.randomUUID()`.
+  5. Inserts the initial row via `createInitialMetadata()` with the caller's `user_id`, progress `0%`, stage `web_research`.
+  6. Spawns `runPipeline(jobId, userId, payload)` asynchronously.
+  7. Responds `202 Accepted` with the `jobId`. The pipeline runs in the background.
 
-#### `GET` [/api/generate/[jobId]](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/route.ts)
+#### `GET` [/api/generate/[jobId]](file://./src/app/api/generate/[jobId]/route.ts)
 - **Purpose**: Retrieves the detailed status and current progress metadata of a single job.
 - **Workflow**:
-  1. Locates the `metadata.json` file inside the job's folder (`generations/{jobId}/metadata.json`).
-  2. Reads, parses, and returns the metadata JSON object. If the file is not found, responds with an HTTP `404 Not Found`.
+  1. Validates `jobId` is a UUID and resolves the caller.
+  2. Selects the row through the request-scoped client. RLS makes another user's job indistinguishable from a missing one, so both give `404 Not Found`.
+  3. Returns the row mapped back into the metadata shape the frontend expects.
 
-#### `DELETE` [/api/generate/[jobId]](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/route.ts)
+#### `DELETE` [/api/generate/[jobId]](file://./src/app/api/generate/[jobId]/route.ts)
 - **Purpose**: Cancels a running job or discards job files.
 - **Query Parameter**: `discard` (boolean, e.g. `/api/generate/[jobId]?discard=true`)
 - **Workflow**:
-  1. Calls [cancelActiveJob()](file:///E:/programming/manimate-uni/src/lib/manimate/activeJobs.ts#L28-L37) to abort the active pipeline execution context and terminate all child processes (Manim, FFmpeg, etc.).
-  2. **If `discard=true`**: Recursively removes the entire job directory (`generations/{jobId}`) from disk and returns HTTP `204 No Content`.
-  3. **Otherwise**: Reads the job's `metadata.json`. If already terminal (`completed` or `failed`), does nothing. Otherwise, updates status to `failed`, sets the error message to `"Job cancelled by user"`, logs timestamps, saves the updated file, and returns HTTP `204 No Content`.
+  1. Validates `jobId`, resolves the caller, and confirms the row is visible under RLS (else `404`).
+  2. Calls `cancelActiveJob()` to abort the pipeline's AbortController and `SIGTERM` its child processes (Manim, FFmpeg).
+  3. **If `discard=true`**: removes the job's objects from Storage, deletes the scratch directory, deletes the row, and returns `204 No Content`.
+  4. **Otherwise**: if already terminal (`completed` / `failed`), no-ops. Else sets status `failed` with error `"Job cancelled by user"` and returns `204 No Content`.
 
 ---
 
@@ -47,47 +52,45 @@ The backend of Manimate Uni is built using Next.js Route Handlers. All API endpo
 
 Quiz generation is separate from the core video pipeline. It targets the student assessment workflow on a per-job basis.
 
-#### `GET` [/api/generate/[jobId]/quiz](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/quiz/route.ts)
+#### `GET` [/api/generate/[jobId]/quiz](file://./src/app/api/generate/[jobId]/quiz/route.ts)
 - **Purpose**: Retrieves the mastery quiz for the corresponding lecture.
 - **Workflow**:
-  1. Checks if `generations/{jobId}/quiz.json` already exists. If yes, reads and returns it.
-  2. If it does not exist, reads `lecture_plan.json` and the resolved model options.
-  3. Invokes the LLM to generate the first 5 questions representing Difficulty Level 1 using [generateQuizQuestions()](file:///E:/programming/manimate-uni/src/lib/manimate/llm.ts#L195-L232).
+  1. Checks the row's `quiz` column. If populated, returns it.
+  2. Otherwise reads the `lecture_plan` column (`409` if the video hasn't been generated yet) and the stored model options.
+  3. Invokes the LLM to generate the first 5 questions representing Difficulty Level 1 using [generateQuizQuestions()](file://./src/lib/manimate/llm.ts#L195-L232).
   4. Appends tracking fields (`userResponse: null`, `isCorrect: null`) to each question.
-  5. Saves the structure in `generations/{jobId}/quiz.json` and returns it.
+  5. Writes the structure to the `quiz` column and returns it.
 
-#### `POST` [/api/generate/[jobId]/quiz](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/quiz/route.ts)
+#### `POST` [/api/generate/[jobId]/quiz](file://./src/app/api/generate/[jobId]/quiz/route.ts)
 - **Purpose**: Generates additional, harder questions for the quiz (progressive mastery).
 - **Workflow**:
-  1. Reads existing quiz questions from `quiz.json` and gets the current difficulty level.
+  1. Reads existing quiz questions from the `quiz` column and gets the current difficulty level.
   2. Increments the difficulty level (`difficultyLevel + 1`).
   3. Calls the LLM to generate 5 new questions matching the higher difficulty level.
   4. Appends the new questions to the existing quiz list and updates the difficulty level.
-  5. Saves and returns the updated `quiz.json`.
+  5. Saves and returns the updated quiz.
 
-#### `PATCH` [/api/generate/[jobId]/quiz](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/quiz/route.ts)
+#### `PATCH` [/api/generate/[jobId]/quiz](file://./src/app/api/generate/[jobId]/quiz/route.ts)
 - **Purpose**: Syncs user responses and progress.
 - **Workflow**:
   1. Receives an updated list of questions (including user answers and grading evaluations).
   2. Validates the payload structure.
-  3. Writes the updated quiz state directly to `generations/{jobId}/quiz.json` to persist the student's score.
+  3. Writes the updated quiz state to the `quiz` column to persist the student's score.
 
 ---
 
 ### Video Serving Endpoint
 
-#### `GET` [/api/generate/[jobId]/video](file:///E:/programming/manimate-uni/src/app/api/generate/[jobId]/video/route.ts)
-- **Purpose**: Streams the compiled lecture video file (`video.mp4`) supporting range-requests.
+#### `GET` [/api/generate/[jobId]/video](file://./src/app/api/generate/[jobId]/video/route.ts)
+- **Purpose**: Hands the client a playable URL for the finished video.
+- **Query Parameter**: `download` (`?download=1` asks Storage to set `Content-Disposition: attachment` — the browser ignores `<a download>` across origins).
 - **Workflow**:
-  1. Verifies that `generations/{jobId}/video.mp4` exists.
-  2. Checks for the `Range` request header.
-  3. **If Range header exists** (supports scrubbing and seeking in HTML5 players):
-     - Parses the range bounds (e.g., `bytes=0-`).
-     - Spawns a Node.js `fs.createReadStream` bound to that byte offset.
-     - Pipes the Node stream into a Web Streams API stream (`Readable.toWeb`).
-     - Responds with HTTP `206 Partial Content` and matching headers (`Content-Range`, `Content-Length`, `Content-Type: video/mp4`).
-  4. **Otherwise**:
-     - Streams the entire video from the beginning with HTTP `200 OK` and a `Content-Disposition: inline` header.
+  1. Validates `jobId` is a UUID and the caller is signed in.
+  2. Reads `final_video_path` through the **request-scoped** client. Another user's job returns no row, so this 404s rather than leaking.
+  3. Mints a signed Storage URL (1 hour TTL) with the service-role client.
+  4. Responds `302` to that URL with `Cache-Control: no-store`.
+
+Range requests are handled by Supabase's CDN: browsers reissue them against the redirect target, so seeking works and playback traffic never touches this container.
 
 ---
 
@@ -95,7 +98,7 @@ Quiz generation is separate from the core video pipeline. It targets the student
 
 To prevent heavy local resource exhaustion (since Manim and voiceover generation spawn subprocesses), jobs are throttled using a lightweight in-memory semaphore queue.
 
-- **Source Code**: [src/lib/manimate/queue.ts](file:///E:/programming/manimate-uni/src/lib/manimate/queue.ts)
+- **Source Code**: [src/lib/manimate/queue.ts](file://./src/lib/manimate/queue.ts)
 - **Key Functions**:
   - `acquireJobSlot()`: Check if active running count matches `MAX_CONCURRENT_JOBS` (dynamic env variable, fallback to `1`). If full, appends a Promise resolver function `() => void` into a global `waiters` FIFO array and waits. Once under threshold, increments running counter.
   - `releaseJobSlot()`: Decrements the running counter and shifts the next resolver out of the `waiters` queue, triggering it to resume the next queued job.
@@ -107,7 +110,7 @@ To prevent heavy local resource exhaustion (since Manim and voiceover generation
 
 Because the pipeline relies on long-running CLI tools (Python interpreter rendering Manim, ffmpeg concatenating/muxing), the backend tracks child subprocesses and provides instant cancellation mechanisms.
 
-- **Source Code**: [src/lib/manimate/activeJobs.ts](file:///E:/programming/manimate-uni/src/lib/manimate/activeJobs.ts)
+- **Source Code**: [src/lib/manimate/activeJobs.ts](file://./src/lib/manimate/activeJobs.ts)
 - **State Store**: A global Map `globalThis.__manimateActiveJobs` tracks active jobs by UUID. Each job maps to:
   ```typescript
   type ActiveJob = {
@@ -117,7 +120,7 @@ Because the pipeline relies on long-running CLI tools (Python interpreter render
   ```
 - **Job Start & Register**:
   1. `startActiveJob(jobId)` registers a new `AbortController` and an empty `children` child-process Set.
-  2. The command wrapper [runCommand()](file:///E:/programming/manimate-uni/src/lib/manimate/process.ts#L5-L35) spawns processes. Before spawning, it checks if the job's controller is aborted.
+  2. The command wrapper [runCommand()](file://./src/lib/manimate/process.ts#L5-L35) spawns processes. Before spawning, it checks if the job's controller is aborted.
   3. Once spawned, the `ChildProcess` object is registered into the active job's `children` Set. On command completion or error, the child is removed from the Set.
 - **Cancellation Flow**:
   - When `DELETE /api/generate/[jobId]` is received, it invokes `cancelActiveJob(jobId)`.
@@ -127,27 +130,54 @@ Because the pipeline relies on long-running CLI tools (Python interpreter render
 
 ---
 
-## 4. File-Based Database and Job Store
+## 4. Supabase Persistence
 
-Manimate Uni runs without a traditional SQL/NoSQL database. State, logs, and files are stored strictly on-disk.
+Job state lives in Postgres; finished artifacts live in Supabase Storage. Nothing durable is kept on the container's disk.
 
-- **Directory Layout**:
-  ```
-  generations/
-    ├── {jobId}/
-    │    ├── metadata.json           # Stores job configurations, progress, errors, timestamps
-    │    ├── lecture_plan.json       # Generated plan outlining modules and scene descriptions
-    │    ├── quiz.json               # Persisted user quiz answers and questions list
-    │    ├── video.mp4               # Final compiled/stitched video file
-    │    ├── scene_code/             # Python files generated for individual scenes
-    │    ├── media/                  # Intermediate Manim assets (images/video segments)
-    │    ├── tts/                    # Intermediate generated WAV voiceovers
-    │    └── voiceover_videos/       # Individual scene video segments muxed with voiceover audio
-  ```
+### Postgres — `public.jobs`
+
+One row per generation, defined in `supabase/migrations/0001_init.sql`. The row mirrors the old `metadata.json` shape (so the frontend was unchanged), with two additions:
+
+- `user_id` — owner, enforced by the `own jobs` RLS policy.
+- `lecture_plan` / `quiz` — `jsonb` columns replacing the former sidecar files.
+- `final_video_path` — a Storage **object key**, not a URL. Signed URLs expire, so they are minted per request instead of persisted.
+
+`src/lib/manimate/jobStore.ts` is the only module that touches the table. Every function takes an optional Supabase client: route handlers pass their request-scoped one (RLS applies), while the pipeline — a detached promise with no request context, and therefore no session cookie — falls back to the service role.
+
+`updateStage()` fires on every progress tick and deliberately updates only `stages`, `overall_progress`, `current_stage` and `elapsed_seconds`, so a tick never rewrites `lecture_plan`.
+
+### Storage — private `generations` bucket
+
+```
+{user_id}/{job_id}/
+   ├── video.mp4          # final artifact
+   └── scene_code/*.py    # generated Manim scripts (debugging aid)
+```
+
+Bucket policies key on the first path segment matching `auth.uid()`. Files over 6 MB upload via the resumable (TUS) endpoint so a network blip cannot discard a finished render.
+
+### Scratch disk — `MANIMATE_WORK_DIR`
+
+Manim needs real files, so a render still writes to disk, under `jobWorkDir(jobId)` (`src/lib/manimate/workspace.ts`):
+
+```
+{MANIMATE_WORK_DIR}/{job_id}/
+   ├── scene_code/          # generated Python
+   ├── media/scene_*/attempt_N/   # Manim output, one dir per correction attempt
+   ├── tts/                 # Kokoro WAVs
+   ├── voiceover_videos/    # per-scene muxed clips
+   └── module_*_full.mp4    # per-module concatenations
+```
+
+All of it is disposable and removed in the pipeline's `finally` block. `scene_id` comes from LLM JSON and is sanitised (`sanitizeSegment`) before reaching any path.
+
+### Restart recovery
+
+Renders are in-process, so a crash or redeploy orphans them. `src/instrumentation.ts` runs `reapOrphanedJobs()` once at boot, failing any row left `pending`/`running` — otherwise the Studio page would poll a dead job every 2s forever.
 
 ### Progress Weight Calculations
 
-Overall job progress is updated continuously using [updateStage()](file:///E:/programming/manimate-uni/src/lib/manimate/jobStore.ts#L78-L101) by scaling the percentage of completion against hardcoded stage weights:
+Overall job progress is updated continuously using [updateStage()](file://./src/lib/manimate/jobStore.ts#L78-L101) by scaling the percentage of completion against hardcoded stage weights:
 
 | Stage Name | Description | Weight |
 | :--- | :--- | :---: |
@@ -158,6 +188,6 @@ Overall job progress is updated continuously using [updateStage()](file:///E:/pr
 | `voiceover` | Generates speech WAVs via Kokoro ONNX | **15%** |
 | `stitching` | Stitches and muxes the files together | **10%** |
 
-Overall progress is evaluated in [computeOverallProgress()](file:///E:/programming/manimate-uni/src/lib/manimate/jobStore.ts#L103-L112) as:
+Overall progress is evaluated in [computeOverallProgress()](file://./src/lib/manimate/jobStore.ts#L103-L112) as:
 $$\text{Progress} = \sum (\text{Stage Weight} \times \frac{\text{Stage Completion \%}}{100})$$
 This ensures accurate progress bar reporting on the frontend.

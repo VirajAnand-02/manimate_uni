@@ -39,7 +39,22 @@ async function newestMp4(dir: string): Promise<string | null> {
 }
 
 export function defaultManimPython() {
-  return process.env.MANIM_PYTHON || path.join(process.cwd(), 'manim-env', 'Scripts', 'python.exe');
+  if (process.env.MANIM_PYTHON) return process.env.MANIM_PYTHON;
+  // venv layout differs by platform: Scripts/python.exe on Windows, bin/python elsewhere.
+  const venv = path.join(process.cwd(), 'manim-env');
+  return process.platform === 'win32'
+    ? path.join(venv, 'Scripts', 'python.exe')
+    : path.join(venv, 'bin', 'python');
+}
+
+/**
+ * -ql (480p15) | -qm (720p30) | -qh (1080p60).
+ * Defaults to -qm: 1080p60 renders roughly 4x slower and produces files that
+ * exceed Supabase Storage's default 50 MB per-object limit.
+ */
+export function manimQuality() {
+  const value = (process.env.MANIM_QUALITY || '-qm').trim();
+  return /^-q[lmhpk]$/.test(value) ? value : '-qm';
 }
 
 export type RenderResult = {
@@ -60,22 +75,26 @@ export async function renderSceneWithCorrections(
   signal?: AbortSignal,
 ): Promise<RenderResult> {
   const sceneDir = path.join(baseDir, 'scene_code');
-  const mediaDir = path.join(baseDir, 'media', `scene_${sceneOutput.module_index}_${sceneOutput.scene_id}`);
+  const sceneMediaRoot = path.join(baseDir, 'media', `scene_${sceneOutput.module_index}_${sceneOutput.scene_id}`);
   await fs.mkdir(sceneDir, { recursive: true });
-  await fs.mkdir(mediaDir, { recursive: true });
   let code = sceneOutput.code;
   let corrections = 0;
   let lastError = '';
 
   for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     if (signal?.aborted) return { success: false, video: null, corrections, code, error: 'Job cancelled' };
+    // Each attempt gets a clean media dir: newestMp4 picks the newest .mp4 it can
+    // find, and a previous attempt's partial_movie_files would poison that choice.
+    const mediaDir = path.join(sceneMediaRoot, `attempt_${attempt}`);
+    await fs.mkdir(mediaDir, { recursive: true });
     const pyFile = path.join(sceneDir, `module_${sceneOutput.module_index}_${sceneOutput.scene_id}.py`);
-    await fs.writeFile(pyFile, stripCodeFences(code), 'utf-8');
-    const className = classNameFromCode(code);
+    const cleanCode = stripCodeFences(code);
+    await fs.writeFile(pyFile, cleanCode, 'utf-8');
+    const className = classNameFromCode(cleanCode);
     try {
       await runCommand(jobId, defaultManimPython(), [
         '-m', 'manim',
-        '-qh',
+        manimQuality(),
         '--media_dir', mediaDir,
         pyFile,
         className,

@@ -1,102 +1,133 @@
 # Manimate Uni
 
-Manimate Uni is an agentic Next.js-based application that translates educational topics into high-fidelity, narrated, dynamic Manim videos. The entire pipeline—from web research and lecture planning to Python code generation, rendering, local text-to-speech (TTS), and video stitching—is orchestrated directly within Next.js.
+Manimate Uni is an agentic Next.js application that translates educational topics into high-fidelity, narrated Manim videos. The entire pipeline—web research, lecture planning, Python code generation, rendering, local text-to-speech, and video stitching—is orchestrated directly within Next.js.
 
 ---
 
 ## 🚀 Key Features
 
 * **Multi-LLM Provider Engine (Vercel AI SDK)**: Supports OpenAI, Anthropic, Google Gemini, and Mistral AI. Includes dynamic model presets, custom `provider/model` overrides, and round-robin key rotation per provider.
-* **Local Subprocess Pipeline**: Executes the local Python compiler to run Manim CLI renders and FFMPEG to mux voiceovers and stitch scenes.
-* **Self-Correcting Rendering Loop**: If the LLM generates Manim code that fails to compile, the pipeline captures the traceback, invokes the corrector LLM, and repairs the script on-the-fly (up to 3 retries).
-* **Dynamic Scene Pacing**: Calculates scene durations dynamically based on the length of the voiceover transcript ($\text{duration} = \lceil\text{chars} / 15\rceil + 3$ seconds) to avoid silent pauses or frozen video tracks during scene transitions.
-* **Mastery Assessment Quizzes**: Generates 5-question multiple-choice quizzes using a separate LLM call based on the generated lecture's content. Offers instant correct/incorrect feedback, skip commands, and the ability to generate harder questions incrementally.
-* **Local Voiceover Synthesis**: Local high-fidelity speech synthesis using the Kokoro-82M ONNX model.
+* **Local Subprocess Pipeline**: Executes the Python compiler to run Manim CLI renders and FFMPEG to mux voiceovers and stitch scenes.
+* **Self-Correcting Rendering Loop**: If the LLM generates Manim code that fails to compile, the pipeline captures the traceback, invokes the corrector LLM, and repairs the script on the fly (up to 3 retries).
+* **Dynamic Scene Pacing**: Calculates scene durations from voiceover length ($\text{duration} = \lceil\text{chars} / 15\rceil + 3$ seconds) to avoid silent pauses or frozen video tracks.
+* **Mastery Assessment Quizzes**: Generates 5-question multiple-choice quizzes from the lecture content, with instant feedback and progressively harder rounds.
+* **Local Voiceover Synthesis**: High-fidelity speech synthesis using the Kokoro-82M ONNX model, run locally.
 
 ---
 
-## ⚙️ Architectural Quirks & Design Patterns
+## ⚙️ Architecture
 
-### 1. File-Based Data Storage (No Database)
-To keep deployment simple and self-contained, **the project does not use a traditional SQL or NoSQL database**. 
-* Every generation request creates a directory under `generations/{jobId}/`.
-* All state, progress metrics, and error logs are saved in `generations/{jobId}/metadata.json`.
-* The structured lesson plan is stored in `generations/{jobId}/lecture_plan.json`, generated Python files are stored in `scene_code/`, audio files in `tts/`, and final videos in the root of the job folder.
-* Quiz assessments are stored and tracked in `generations/{jobId}/quiz.json`.
-* Deleting a build recursively wipes the folder from the file system.
+### 1. Supabase for state and artifacts
 
-### 2. Multi-Key Rotation
-For high-throughput execution without rate-limiting issues, you can provide comma-separated keys (e.g., `OPENAI_API_KEYS="key1,key2,key3"`). The server splits them and performs a round-robin rotation for each API request.
+* **Postgres** holds every job. One row per generation in `public.jobs`, with the lecture plan and quiz as `jsonb` columns. Schema lives in `supabase/migrations/0001_init.sql`.
+* **Storage** (private `generations` bucket) holds the finished `video.mp4` and the generated `.py` scene code, under `{user_id}/{job_id}/`.
+* **Auth + Row Level Security** scope every job to its owner. Each user only ever sees their own generations — RLS enforces this at the database, so route handlers don't compare user ids by hand.
+* Intermediates (`media/`, `tts/`, `voiceover_videos/`, per-module MP4s) are **scratch**. They live on the container's local disk under `MANIMATE_WORK_DIR` and are deleted when the job ends. Only the final video is uploaded.
+
+Videos are served by redirecting to a short-lived signed Storage URL, so playback traffic bypasses the app server while still requiring an authenticated, authorized request to obtain the link.
+
+### 2. Multi-key rotation
+
+For throughput without rate-limiting, provide comma-separated keys (e.g. `OPENAI_API_KEYS="key1,key2,key3"`). The server splits them and rotates round-robin per request.
+
+### 3. Single-process render queue
+
+Renders run in-process as detached promises, gated by an in-memory semaphore (`MAX_CONCURRENT_JOBS`, default 1). This means the app **must run as a single, always-on instance** — see Deployment below. Jobs orphaned by a restart are failed automatically at boot (`src/lib/manimate/reaper.ts`).
 
 ---
 
-## 🛠️ Prerequisites & Setup Guide
+## 🛠️ Local Setup
 
-### 1. System Dependencies
-* **Node.js**: Active LTS version (Node 18+).
-* **FFMPEG & FFProbe**: Must be installed and available on your system `PATH`. Alternatively, you can override the path in your `.env.local` file.
-* **LaTeX (Optional but Recommended)**: Required by Manim if you want to render complex mathematical equations (MathTex). Use **MiKTeX** (Windows) or **TeX Live** (macOS/Linux).
+### 1. System dependencies
 
-### 2. Python Virtual Environment (`venv`) Setup
-Manim requires Python 3.8+ and its own library environment. We recommend setting up a virtual environment inside the project directory:
+* **Node.js** 18+ (Active LTS).
+* **FFMPEG & FFProbe** on your `PATH`, or set `FFMPEG_PATH` / `FFPROBE_PATH`.
+* **LaTeX** — required for `MathTex`, which the prompts actively use. MiKTeX (Windows) or TeX Live (macOS/Linux). Without it, math scenes fail and burn all correction retries.
+* **cairo & pango** — hard requirements of Manim (`pycairo`, `manimpango`). Bundled on Windows/macOS wheels; on Linux install `libcairo2-dev` and `libpango1.0-dev`.
+
+### 2. Python environment
 
 ```bash
-# 1. Create a virtual environment named "manim-env"
 python -m venv manim-env
 
-# 2. Activate the virtual environment
-# On Windows (PowerShell):
+# Windows (PowerShell):
 .\manim-env\Scripts\Activate.ps1
-# On Windows (CMD):
-.\manim-env\Scripts\activate.bat
-# On macOS/Linux:
+# macOS/Linux:
 source manim-env/bin/activate
 
-# 3. Install Manim and its dependencies
 pip install manim
+manim --version
 ```
 
-Verify that Manim is installed correctly by running `manim --version` in your terminal inside the activated environment.
+### 3. Supabase project
 
-### 3. Application Setup & Run
-Configure the project credentials and paths:
+1. Create a project at [supabase.com](https://supabase.com).
+2. Apply the schema — either `supabase db push`, or paste `supabase/migrations/0001_init.sql` into the SQL Editor. This creates the `jobs` table, its RLS policies, the private `generations` bucket, and the bucket's access policies.
+3. For a quick start, turn **off** email confirmation under *Authentication → Providers → Email*, so sign-up gives you a session immediately.
+4. Copy the Project URL, `anon` key, and `service_role` key from *Project Settings → API*.
 
-1. **Install Node dependencies**:
-   ```bash
-   npm install
-   ```
+### 4. Application
 
-2. **Configure Environment Variables**:
-   Copy `.env.example` to `.env.local`:
-   ```bash
-   cp .env.example .env.local
-   ```
-   Open `.env.local` and configure the following keys:
-   
-   * **API Keys**: Provide credentials for at least one provider (Mistral, OpenAI, Anthropic, or Google Gemini). Both single API keys (`_API_KEY`) and list rotations (`_API_KEYS`) are supported:
-     ```ini
-     OPENAI_API_KEY="sk-proj-..."
-     MISTRAL_API_KEYS="key_one,key_two"
-     ```
-   * **Python Executable**: Set the absolute path of the Python interpreter inside the virtual environment you created:
-     ```ini
-     MANIM_PYTHON="E:\\programming\\manimate-uni\\manim-env\\Scripts\\python.exe"
-     ```
-   * **FFMPEG Executable**: If FFMPEG is not on your global PATH, provide the path directly:
-     ```ini
-     FFMPEG_PATH="C:\\path\\to\\ffmpeg.exe"
-     ```
+```bash
+npm install
+cp .env.example .env.local
+```
 
-3. **Start the Development Server**:
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
+Fill in `.env.local`:
+
+* **Supabase**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+* **At least one LLM provider**: `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY`.
+* **Python**: `MANIM_PYTHON` — the absolute path to your venv interpreter (`manim-env/Scripts/python.exe` on Windows, `manim-env/bin/python` elsewhere).
+* **Scratch dir**: `MANIMATE_WORK_DIR` — defaults to a `manimate` folder in your system temp dir.
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000), sign up, and generate.
+
+> `NEXT_PUBLIC_*` variables are inlined into the client bundle **at build time**. If you change them, rebuild.
 
 ---
 
-## 📝 Quiz Assessment Details
-Once a video completes building, you can select the **Take Mastery Quiz** button on the Studio screen. 
-* This launches the quiz view (`/studio/{jobId}/quiz`).
-* The system evaluates your input instantly and displays educational analysis of the selected, incorrect, and skipped options.
-* On completing the quiz, clicking **Generate Harder Questions** triggers the API, increments the difficulty level, and dynamically appends 5 more complex, calculations-based, or proof-oriented questions to your assessment.
+## 🚢 Deployment
+
+The app **cannot run on Vercel, Netlify, or Supabase Edge Functions.** Renders take minutes, spawn Python subprocesses, and need a writable disk — none of which serverless provides. Deploy the included `Dockerfile` to a container host: Railway, Render, Fly.io, or your own VPS.
+
+```bash
+docker build \
+  --build-arg NEXT_PUBLIC_SUPABASE_URL="https://xxx.supabase.co" \
+  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY="eyJ..." \
+  -t manimate .
+```
+
+The image bundles Node, Python + Manim, ffmpeg, a TeX Live subset, and the pre-downloaded Kokoro weights. Expect **3–4 GB**; check your host allows that.
+
+### Host requirements
+
+| Requirement | Why |
+| :--- | :--- |
+| **Scale-to-zero / sleep disabled** | `POST /api/generate` returns `202` and keeps rendering in the background. If the platform suspends the instance after the response, every job dies mid-render. |
+| **≥ 2 vCPU, ≥ 4 GB RAM** | Manim at 720p30 will OOM a 512 MB instance. |
+| **Single instance** | The render queue and cancellation registry are in-process. Multiple replicas would exceed `MAX_CONCURRENT_JOBS` and break job cancellation. |
+| Ephemeral disk is fine | Local disk is scratch only; durable state is in Supabase. |
+
+### Environment
+
+Set everything from `.env.example` on the host, plus `MANIM_PYTHON=/opt/manim-env/bin/python` (already baked into the image). `NEXT_PUBLIC_*` values must **also** be present at build time — Railway and Render expose service variables to the build automatically; on Fly pass them as `--build-arg`.
+
+### Video size and Supabase limits
+
+`MANIM_QUALITY` defaults to `-qm` (720p30). Raising it to `-qh` (1080p60) renders roughly 4x slower and produces files past Supabase Storage's default 50 MB per-object limit. Raise the project's file size limit before switching. Uploads over 6 MB use the resumable (TUS) endpoint, so a network blip won't discard a finished render.
+
+---
+
+## 📝 Quiz Assessment
+
+After a video completes, choose **Take Mastery Quiz** on the Studio screen to open `/studio/{jobId}/quiz`. Answers are graded instantly with an explanation of the correct, selected, and skipped options. **Generate Harder Questions** increments the difficulty level and appends 5 more proof- or calculation-oriented questions.
+
+---
+
+## ⚠️ Security note
+
+The pipeline executes LLM-generated Python. The container is the sandbox: child processes are spawned with a minimal environment so generated code never sees your API keys, and the image runs as an unprivileged user. Web-search snippets do flow into the code generator, which is a prompt-injection path to code execution. That is an acceptable trade for an authenticated deployment you control; before opening public sign-ups, add real isolation (a throwaway per-render container, gVisor, or a render user with no network egress).

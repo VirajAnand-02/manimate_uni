@@ -2,13 +2,15 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { ManimateJobRequest } from '@/src/types/manimate';
 import { finishActiveJob, startActiveJob } from './activeJobs';
-import { jobDir, patchMetadata, updateStage, writeMetadata, readMetadata, finishJob } from './jobStore';
+import { completeJob, patchMetadata, updateStage, writeLecturePlan, finishJob } from './jobStore';
 import { fetchWebResearch } from './webResearch';
 import { generateLecturePlan, generateManimForModule, resolveProviderAndModel } from './llm';
 import { renderSceneWithCorrections, type SceneOutput } from './manim';
 import { generateTtsAudio } from './tts';
 import { muxVoiceover, stitchFinal } from './video';
 import { acquireJobSlot, releaseJobSlot } from './queue';
+import { uploadArtifact, uploadDirectory } from './storage';
+import { ensureJobWorkDir, jobWorkDir, removeJobWorkDir, sanitizeSegment } from './workspace';
 
 function getSceneList(lecturePlan: any): SceneOutput[] {
   const outputs: SceneOutput[] = [];
@@ -72,14 +74,11 @@ function normalizeRequest(input: Partial<ManimateJobRequest>): ManimateJobReques
     model: input.model || process.env.MANIMATE_MODEL || 'mistral-large-2512',
     model_provider: input.model_provider || 'mistralai',
     topic_depth: input.topic_depth || 'normal',
-    render_dir: input.render_dir,
     max_correction_attempts: Number(input.max_correction_attempts ?? process.env.MAX_CORRECTION_ATTEMPTS ?? 3),
     render_timeout_per_scene: Number(input.render_timeout_per_scene ?? process.env.RENDER_TIMEOUT_SECONDS ?? 120),
     skip_voiceovers: Boolean(input.skip_voiceovers ?? false),
-    manim_python: input.manim_python,
     tts_voice: input.tts_voice,
     tts_lang: input.tts_lang,
-    tts_output_dir: input.tts_output_dir,
     tts_timeout: Number(input.tts_timeout ?? 120),
     tts_poll_seconds: Number(input.tts_poll_seconds ?? 5),
     llm_timeout: Number(input.llm_timeout ?? process.env.LLM_TIMEOUT_SECONDS ?? 180),
@@ -88,9 +87,13 @@ function normalizeRequest(input: Partial<ManimateJobRequest>): ManimateJobReques
   };
 }
 
-export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJobRequest>) {
+export async function runPipeline(
+  jobId: string,
+  userId: string,
+  rawRequest: Partial<ManimateJobRequest>,
+) {
   const request = normalizeRequest(rawRequest);
-  const baseDir = jobDir(jobId);
+  const baseDir = jobWorkDir(jobId);
   const active = startActiveJob(jobId);
   let acquired = false;
 
@@ -104,7 +107,7 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
       options: request,
     });
 
-    await fs.mkdir(baseDir, { recursive: true });
+    await ensureJobWorkDir(jobId);
 
     await updateStage(jobId, 'web_research', { status: 'running', message: 'Collecting optional Tavily context...', pct: 15 });
     let webContext: string | null = null;
@@ -129,7 +132,7 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
     if (!lecturePlan.modules?.length || !plannedScenes.length) {
       throw new Error('Lecture planner returned no modules or scenes.');
     }
-    await fs.writeFile(path.join(baseDir, 'lecture_plan.json'), JSON.stringify(lecturePlan, null, 2), 'utf-8');
+    await writeLecturePlan(jobId, lecturePlan);
     await updateStage(jobId, 'lecture_planning', {
       status: 'done',
       message: `Lecture plan generated: ${lecturePlan.modules.length} modules, ${plannedScenes.length} scenes.`,
@@ -163,7 +166,9 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
         codeGenLog.push(`module_${moduleIndex}/${item.scene_id}: ${matched}${scene?.voiceover ? ' [has VO]' : ' [no VO]'}`);
         const output: SceneOutput = {
           module_index: moduleIndex,
-          scene_id: String(item.scene_id),
+          // scene_id comes straight from LLM JSON and becomes part of a filename,
+          // so it must not be allowed to contain path separators.
+          scene_id: sanitizeSegment(item.scene_id, `scene_${generatedIndex + 1}`),
           scene: scene || {},
           code: String(item.code || ''),
         };
@@ -252,7 +257,7 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
             const audio = await generateTtsAudio(voiceover, {
               voice: request.tts_voice,
               fileBase: `module_${item.module_index}_${item.scene_id}`,
-              outputDir: request.tts_output_dir || path.join(baseDir, 'tts'),
+              outputDir: path.join(baseDir, 'tts'),
             });
             video = await muxVoiceover(jobId, item.video, audio.file_path, path.join(baseDir, 'voiceover_videos', `module_${item.module_index}_${item.scene_id}_vo.mp4`));
             ok += 1;
@@ -288,6 +293,13 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
     const finalVideo = await stitchFinal(jobId, moduleVideos, baseDir);
     let finalSizeMb = 0;
     try { const s = await fs.stat(finalVideo); finalSizeMb = Math.round(s.size / (1024 * 1024) * 10) / 10; } catch { /* ignore */ }
+
+    await updateStage(jobId, 'stitching', { status: 'running', message: 'Uploading final video...', pct: 70 });
+    const storageKey = await uploadArtifact(userId, jobId, 'video.mp4', finalVideo, 'video/mp4');
+    // Generated Python is small and useful for debugging a bad render; a failed
+    // upload here is logged and ignored rather than failing a finished job.
+    await uploadDirectory(userId, jobId, codeDir, 'scene_code', 'text/x-python');
+
     await updateStage(jobId, 'stitching', {
       status: 'done',
       message: 'Final video ready.',
@@ -295,17 +307,8 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
       detail: { final_video: `/api/generate/${jobId}/video`, modules_stitched: moduleVideos.size, size_mb: finalSizeMb },
     });
 
-    const current = await readMetadata(jobId);
-    if (current) {
-      current.status = 'completed';
-      current.overall_progress = 100;
-      current.current_stage = null;
-      current.final_video = `/api/generate/${jobId}/video`;
-      current.finished_at = new Date().toISOString();
-      current.elapsed_seconds = current.started_at ? (Date.now() - new Date(current.started_at).getTime()) / 1000 : current.elapsed_seconds;
-      await writeMetadata(jobId, current);
-    }
-    return finalVideo;
+    await completeJob(jobId, storageKey);
+    return storageKey;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await finishJob(jobId, 'failed', message);
@@ -313,5 +316,7 @@ export async function runPipeline(jobId: string, rawRequest: Partial<ManimateJob
   } finally {
     if (acquired) releaseJobSlot();
     finishActiveJob(jobId);
+    // Scratch only — the video and scene code now live in Supabase Storage.
+    await removeJobWorkDir(jobId);
   }
 }

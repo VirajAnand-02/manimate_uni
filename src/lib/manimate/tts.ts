@@ -1,10 +1,11 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { sanitizeSegment, WORK_DIR } from './workspace';
 
 let ttsPromise: Promise<any> | null = null;
 
 function sanitizeBase(name: string) {
-  return name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || `tts_${Date.now()}`;
+  return sanitizeSegment(name, `tts_${Date.now()}`);
 }
 
 async function getTts() {
@@ -24,7 +25,7 @@ export async function generateTtsAudio(
 ) {
   if (!text.trim()) throw new Error('text is required');
   const tts = await getTts();
-  const outputDir = options.outputDir || path.join(process.cwd(), 'generations', 'tts');
+  const outputDir = options.outputDir || path.join(WORK_DIR, 'tts');
   await fs.mkdir(outputDir, { recursive: true });
   const filePath = path.join(outputDir, `${sanitizeBase(options.fileBase || 'voiceover')}.wav`);
   const audio = await tts.generate(text, {

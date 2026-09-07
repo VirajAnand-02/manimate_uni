@@ -10,6 +10,14 @@ function ffprobe() {
   return process.env.FFPROBE_PATH || 'ffprobe';
 }
 
+// ffmpeg had no timeout at all: a wedged encode (a long tpad re-encode, say)
+// would block the job forever, since only user cancellation could kill it.
+const FFPROBE_TIMEOUT_MS = 30_000;
+
+function ffmpegTimeoutMs() {
+  return Math.max(60, Number(process.env.FFMPEG_TIMEOUT_SECONDS || 900)) * 1000;
+}
+
 async function getMediaDuration(jobId: string, file: string): Promise<number | null> {
   try {
     const { stdout } = await runCommand(jobId, ffprobe(), [
@@ -17,7 +25,7 @@ async function getMediaDuration(jobId: string, file: string): Promise<number | n
       '-show_entries', 'format=duration',
       '-of', 'json',
       file,
-    ]);
+    ], { timeoutMs: FFPROBE_TIMEOUT_MS });
     const data = JSON.parse(stdout);
     const duration = Number(data?.format?.duration);
     return Number.isFinite(duration) ? duration : null;
@@ -31,7 +39,7 @@ async function concat(jobId: string, inputs: string[], output: string) {
   const listPath = path.join(path.dirname(output), `${path.basename(output)}.txt`);
   const body = inputs.map((file) => `file '${file.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n');
   await fs.writeFile(listPath, body, 'utf-8');
-  await runCommand(jobId, ffmpeg(), ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', output]);
+  await runCommand(jobId, ffmpeg(), ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', output], { timeoutMs: ffmpegTimeoutMs() });
   return output;
 }
 
@@ -51,7 +59,7 @@ export async function muxVoiceover(jobId: string, video: string, audio: string, 
       '-c:a', 'aac',
       '-shortest',
       output,
-    ]);
+    ], { timeoutMs: ffmpegTimeoutMs() });
     return output;
   }
 
@@ -73,7 +81,7 @@ export async function muxVoiceover(jobId: string, video: string, audio: string, 
   }
 
   args.push(output);
-  await runCommand(jobId, ffmpeg(), args);
+  await runCommand(jobId, ffmpeg(), args, { timeoutMs: ffmpegTimeoutMs() });
   return output;
 }
 

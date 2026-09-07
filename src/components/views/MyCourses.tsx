@@ -6,6 +6,7 @@ import { Sparkles, Play, Share2, Rocket, Globe, Cpu, Clock, BarChart3, ChevronRi
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { redirectToLogin } from '@/src/lib/authRedirect';
 
 interface GenerationJob {
   jobId: string;
@@ -31,6 +32,7 @@ export default function MyCourses() {
     const fetchGenerations = async () => {
       try {
         const res = await fetch('/api/generate');
+        if (res.status === 401) return redirectToLogin();
         if (res.ok) {
           const data = await res.json();
           setGenerations(data);

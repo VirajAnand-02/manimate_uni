@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env
+.env.local
+generations
+manim-env
+tsconfig.tsbuildinfo
+npm-debug.log*

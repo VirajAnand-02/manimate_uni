@@ -6,6 +6,7 @@ import { Play, Download, Monitor, CheckCircle2, Loader2, Sparkles, ChevronRight,
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import { useRouter } from 'next/navigation';
+import { redirectToLogin } from '@/src/lib/authRedirect';
 
 interface StudioProps {
   jobId?: string;
@@ -109,6 +110,10 @@ export default function Studio({ jobId }: StudioProps) {
     const fetchJob = async () => {
       try {
         const res = await fetch(`/api/generate/${jobId}`);
+        if (res.status === 401) {
+          clearInterval(pollInterval);
+          return redirectToLogin();
+        }
         if (!res.ok) {
           setError("Generation job details not found.");
           setLoading(false);
@@ -439,7 +444,7 @@ export default function Studio({ jobId }: StudioProps) {
                    <div className="flex items-center gap-2">
                       {status === 'completed' && (
                          <a 
-                           href={`/api/generate/${jobId}/video`} 
+                           href={`/api/generate/${jobId}/video?download=1`} 
                            download={`manimate_${jobId?.slice(0, 8)}.mp4`}
                            className="p-3.5 rounded-xl bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-all flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
                          >

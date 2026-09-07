@@ -1,25 +1,25 @@
 import { NextResponse } from 'next/server';
 import type { ManimateJobRequest } from '@/src/types/manimate';
-import { createInitialMetadata, createJobId, ensureGenerationsDir, listJobs } from '@/src/lib/manimate/jobStore';
+import { createInitialMetadata, createJobId, listJobs } from '@/src/lib/manimate/jobStore';
 import { runPipeline } from '@/src/lib/manimate/pipeline';
+import { createClient } from '@/src/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 function buildPayload(body: Record<string, unknown>): Partial<ManimateJobRequest> {
   const payload: Partial<ManimateJobRequest> = { topic: body.topic as string };
+  // render_dir and manim_python were never read; tts_output_dir was a
+  // caller-controlled write path. None of the three are accepted any more.
   const optionalFields: (keyof ManimateJobRequest)[] = [
     'model',
     'model_provider',
     'topic_depth',
-    'render_dir',
     'max_correction_attempts',
     'render_timeout_per_scene',
-    'manim_python',
     'skip_voiceovers',
     'tts_voice',
     'tts_lang',
-    'tts_output_dir',
     'tts_timeout',
     'tts_poll_seconds',
     'llm_timeout',
@@ -36,7 +36,12 @@ function buildPayload(body: Record<string, unknown>): Partial<ManimateJobRequest
 
 export async function GET() {
   try {
-    return NextResponse.json(await listJobs());
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+    // RLS on public.jobs scopes this to the caller's own rows.
+    return NextResponse.json(await listJobs(supabase));
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -44,8 +49,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  await ensureGenerationsDir();
   try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
     const body = await request.json();
     if (!body.topic || typeof body.topic !== 'string' || !body.topic.trim()) {
       return NextResponse.json({ error: 'Topic is required' }, { status: 400 });
@@ -53,9 +61,10 @@ export async function POST(request: Request) {
 
     const jobId = createJobId();
     const payload = buildPayload(body);
-    await createInitialMetadata(jobId, body.topic.trim(), payload);
+    await createInitialMetadata(jobId, user.id, body.topic.trim(), payload, supabase);
 
-    runPipeline(jobId, payload).catch((error) => {
+    // Detached on purpose: the render outlives this request by minutes.
+    runPipeline(jobId, user.id, payload).catch((error) => {
       console.error(`[Job ${jobId}] Pipeline failed:`, error);
     });
 

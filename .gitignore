@@ -11,3 +11,4 @@ manim-env/
 .commandcode/
 .next/
 build.log
+tsconfig.tsbuildinfo

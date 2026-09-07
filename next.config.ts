@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
     '@huggingface/transformers',
     'onnxruntime-node',
     'phonemizer',
+    'tus-js-client',
   ],
 };
 

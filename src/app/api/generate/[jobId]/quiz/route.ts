@@ -1,16 +1,32 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs/promises';
-import path from 'path';
 import { generateQuizQuestions, resolveProviderAndModel } from '@/src/lib/manimate/llm';
-import type { LocalMetadata } from '@/src/types/manimate';
+import { readLecturePlan, readMetadata, readQuiz, writeQuiz } from '@/src/lib/manimate/jobStore';
+import { isValidJobId } from '@/src/lib/manimate/workspace';
+import { createClient } from '@/src/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const GENERATIONS_DIR = path.join(process.cwd(), 'generations');
+/** Resolves the caller and rejects ids that could not have come from us. */
+async function requireJob(jobId: string) {
+  if (!isValidJobId(jobId)) {
+    return { error: NextResponse.json({ error: 'Invalid job id' }, { status: 400 }) };
+  }
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: NextResponse.json({ error: 'Not signed in' }, { status: 401 }) };
+  }
+  // RLS makes another user's job indistinguishable from a missing one.
+  const metadata = await readMetadata(jobId, supabase);
+  if (!metadata) {
+    return { error: NextResponse.json({ error: 'Job not found' }, { status: 404 }) };
+  }
+  return { supabase, metadata };
+}
 
-async function ensureDir(dir: string) {
-  await fs.mkdir(dir, { recursive: true });
+function withTracking(questions: any[]) {
+  return (questions || []).map((q: any) => ({ ...q, userResponse: null, isCorrect: null }));
 }
 
 export async function GET(
@@ -18,50 +34,30 @@ export async function GET(
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
-  const jobDir = path.join(GENERATIONS_DIR, jobId);
-  const quizPath = path.join(jobDir, 'quiz.json');
-  const metadataPath = path.join(jobDir, 'metadata.json');
-  const lecturePlanPath = path.join(jobDir, 'lecture_plan.json');
+  const ctx = await requireJob(jobId);
+  if (ctx.error) return ctx.error;
+  const { supabase, metadata } = ctx;
 
   try {
-    // 1. If quiz.json already exists, read and return it
-    try {
-      const content = await fs.readFile(quizPath, 'utf-8');
-      return NextResponse.json(JSON.parse(content));
-    } catch {
-      // File doesn't exist, proceed to generate
+    const existing = await readQuiz(jobId, supabase);
+    if (existing) return NextResponse.json(existing);
+
+    const lecturePlan = await readLecturePlan(jobId, supabase);
+    if (!lecturePlan) {
+      return NextResponse.json(
+        { error: 'This lecture has no plan yet — generate the video first.' },
+        { status: 409 },
+      );
     }
 
-    // 2. Read metadata and lecture plan for configuration context
-    const metadataContent = await fs.readFile(metadataPath, 'utf-8');
-    const metadata = JSON.parse(metadataContent) as LocalMetadata;
-    const lecturePlanContent = await fs.readFile(lecturePlanPath, 'utf-8');
-    const lecturePlan = JSON.parse(lecturePlanContent);
-
-    // 3. Resolve LLM options
     const llmOptions = resolveProviderAndModel(
       metadata.options?.model_provider,
-      metadata.options?.model
+      metadata.options?.model,
     );
-
-    // 4. Generate first 5 questions (Difficulty Level 1)
     const result = await generateQuizQuestions(lecturePlan, 1, 5, llmOptions);
-    
-    // Add user response tracking keys
-    const questions = (result.questions || []).map((q: any) => ({
-      ...q,
-      userResponse: null,
-      isCorrect: null,
-    }));
+    const quizData = { difficultyLevel: 1, questions: withTracking(result.questions) };
 
-    const quizData = {
-      difficultyLevel: 1,
-      questions,
-    };
-
-    await ensureDir(jobDir);
-    await fs.writeFile(quizPath, JSON.stringify(quizData, null, 2), 'utf-8');
-
+    await writeQuiz(jobId, quizData, supabase);
     return NextResponse.json(quizData);
   } catch (err) {
     console.error('Quiz GET API error:', err);
@@ -77,45 +73,32 @@ export async function POST(
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
-  const jobDir = path.join(GENERATIONS_DIR, jobId);
-  const quizPath = path.join(jobDir, 'quiz.json');
-  const metadataPath = path.join(jobDir, 'metadata.json');
-  const lecturePlanPath = path.join(jobDir, 'lecture_plan.json');
+  const ctx = await requireJob(jobId);
+  if (ctx.error) return ctx.error;
+  const { supabase, metadata } = ctx;
 
   try {
-    // 1. Read existing quiz data
-    const quizContent = await fs.readFile(quizPath, 'utf-8');
-    const quizData = JSON.parse(quizContent);
+    const quizData = (await readQuiz(jobId, supabase)) as any;
+    if (!quizData) {
+      return NextResponse.json({ error: 'No quiz to extend yet' }, { status: 404 });
+    }
+    const lecturePlan = await readLecturePlan(jobId, supabase);
+    if (!lecturePlan) {
+      return NextResponse.json({ error: 'This lecture has no plan' }, { status: 409 });
+    }
 
-    // 2. Read metadata and lecture plan
-    const metadataContent = await fs.readFile(metadataPath, 'utf-8');
-    const metadata = JSON.parse(metadataContent) as LocalMetadata;
-    const lecturePlanContent = await fs.readFile(lecturePlanPath, 'utf-8');
-    const lecturePlan = JSON.parse(lecturePlanContent);
-
-    // 3. Resolve LLM options
     const llmOptions = resolveProviderAndModel(
       metadata.options?.model_provider,
-      metadata.options?.model
+      metadata.options?.model,
     );
 
-    // 4. Increment difficulty level and generate 5 more questions
     const nextDifficulty = (quizData.difficultyLevel || 1) + 1;
     const result = await generateQuizQuestions(lecturePlan, nextDifficulty, 5, llmOptions);
 
-    const newQuestions = (result.questions || []).map((q: any) => ({
-      ...q,
-      userResponse: null,
-      isCorrect: null,
-    }));
-
-    // Append and save
     quizData.difficultyLevel = nextDifficulty;
-    quizData.questions = [...(quizData.questions || []), ...newQuestions];
+    quizData.questions = [...(quizData.questions || []), ...withTracking(result.questions)];
 
-    await ensureDir(jobDir);
-    await fs.writeFile(quizPath, JSON.stringify(quizData, null, 2), 'utf-8');
-
+    await writeQuiz(jobId, quizData, supabase);
     return NextResponse.json(quizData);
   } catch (err) {
     console.error('Quiz POST API error:', err);
@@ -131,8 +114,9 @@ export async function PATCH(
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
-  const jobDir = path.join(GENERATIONS_DIR, jobId);
-  const quizPath = path.join(jobDir, 'quiz.json');
+  const ctx = await requireJob(jobId);
+  if (ctx.error) return ctx.error;
+  const { supabase } = ctx;
 
   try {
     const body = await request.json();
@@ -140,17 +124,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid payload: questions array expected' }, { status: 400 });
     }
 
-    const quizContent = await fs.readFile(quizPath, 'utf-8');
-    const quizData = JSON.parse(quizContent);
-
+    const quizData = ((await readQuiz(jobId, supabase)) as any) ?? { difficultyLevel: 1 };
     quizData.questions = body.questions;
     if (typeof body.difficultyLevel === 'number') {
       quizData.difficultyLevel = body.difficultyLevel;
     }
 
-    await ensureDir(jobDir);
-    await fs.writeFile(quizPath, JSON.stringify(quizData, null, 2), 'utf-8');
-
+    await writeQuiz(jobId, quizData, supabase);
     return NextResponse.json(quizData);
   } catch (err) {
     console.error('Quiz PATCH API error:', err);

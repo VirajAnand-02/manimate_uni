@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Bell } from 'lucide-react';
+import { Search, Bell, LogOut } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -97,6 +97,16 @@ export default function TopNav() {
           </button>
           
           <div className="w-px h-6 bg-white/5 mx-1" />
+
+          <form action="/auth/signout" method="post">
+            <button
+              type="submit"
+              title="Sign out"
+              className="p-2.5 rounded-lg bg-zinc-900 border border-white/5 hover:border-brand-500/30 text-zinc-500 hover:text-white transition-all"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </form>
         </div>
       </div>
     </header>

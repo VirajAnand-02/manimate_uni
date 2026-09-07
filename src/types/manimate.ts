@@ -9,22 +9,17 @@ export interface ManimateJobRequest {
 
   // Optional — LLM
   model?: string;
-  model_provider?: 'mistralai' | 'openai' | 'deepseek' | '';
+  model_provider?: 'mistralai' | 'openai' | 'anthropic' | 'google' | '';
   topic_depth?: 'brief' | 'normal' | 'deep';
-
-  // Optional — output
-  render_dir?: string;
 
   // Optional — rendering
   max_correction_attempts?: number; // 1–10, default 3
   render_timeout_per_scene?: number; // seconds ≥ 10
-  manim_python?: string;
 
   // Optional — voiceover
   skip_voiceovers?: boolean;
   tts_voice?: string;
   tts_lang?: string;
-  tts_output_dir?: string;
   tts_timeout?: number; // seconds ≥ 10
   tts_poll_seconds?: number; // seconds ≥ 5
 
