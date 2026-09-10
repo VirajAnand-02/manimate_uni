@@ -3,6 +3,7 @@ import { generateQuizQuestions, resolveProviderAndModel } from '@/src/lib/manima
 import { readLecturePlan, readMetadata, readQuiz, writeQuiz } from '@/src/lib/manimate/jobStore';
 import { isValidJobId } from '@/src/lib/manimate/workspace';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,7 +14,7 @@ async function requireJob(jobId: string) {
     return { error: NextResponse.json({ error: 'Invalid job id' }, { status: 400 }) };
   }
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await requestUser();
   if (!user) {
     return { error: NextResponse.json({ error: 'Not signed in' }, { status: 401 }) };
   }

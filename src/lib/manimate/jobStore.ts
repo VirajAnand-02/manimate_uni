@@ -201,10 +201,43 @@ export async function deleteJob(jobId: string, client?: SupabaseClient) {
 }
 
 /**
- * Advance one stage. Touches only the progress columns — this fires on every
- * tick, and rewriting the whole row would rewrite lecture_plan along with it.
+ * Advance one stage.
+ *
+ * Prefers the update_job_stage() RPC (migration 0002), which merges the patch
+ * inside Postgres: one round trip instead of two, and — now that scenes render
+ * concurrently — atomic, so two stages finishing at once cannot clobber each
+ * other's progress. Falls back to the read-modify-write path when the function
+ * is not installed yet, which keeps a deployment working before the migration
+ * has been applied.
  */
+let stageRpcAvailable = true;
+
 export async function updateStage(
+  jobId: string,
+  name: StageName,
+  patch: Partial<LocalStageProgress>,
+  client?: SupabaseClient,
+) {
+  if (stageRpcAvailable) {
+    const { error } = await db(client).rpc('update_job_stage', {
+      p_job_id: jobId,
+      p_stage: name,
+      p_patch: patch,
+    });
+    if (!error) return;
+    // PGRST202 = no such function in the schema cache; 42883 = undefined_function.
+    const missing = error.code === 'PGRST202' || error.code === '42883';
+    if (!missing) throw new Error(`Could not update stage ${name} on ${jobId}: ${error.message}`);
+    stageRpcAvailable = false;
+    console.warn(
+      '[jobStore] update_job_stage() not found — falling back to read-modify-write. ' +
+      'Apply supabase/migrations/0002_stage_progress_rpc.sql for atomic, single-round-trip progress.',
+    );
+  }
+  return updateStageFallback(jobId, name, patch, client);
+}
+
+async function updateStageFallback(
   jobId: string,
   name: StageName,
   patch: Partial<LocalStageProgress>,

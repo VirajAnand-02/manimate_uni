@@ -5,6 +5,7 @@ import * as tus from 'tus-js-client';
 import { adminClient } from '@/src/lib/supabase/admin';
 import { storageBucket, supabaseServiceRoleKey, supabaseUrl } from '@/src/lib/supabase/env';
 import { sanitizeSegment } from './workspace';
+import { pool } from './concurrency';
 
 /** Supabase's resumable endpoint requires exactly 6 MB chunks. */
 const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
@@ -85,9 +86,11 @@ export async function uploadDirectory(
   contentType = 'text/plain',
 ) {
   const entries = await fsp.readdir(localDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    await uploadArtifact(
+  const files = entries.filter((entry) => entry.isFile());
+  // These are small text files uploaded at the very end of a job; serialising
+  // them just added round trips to the tail of every render.
+  await pool(files, 6, (entry) =>
+    uploadArtifact(
       userId,
       jobId,
       `${relDir}/${entry.name}`,
@@ -96,8 +99,7 @@ export async function uploadDirectory(
     ).catch((err) => {
       // Scene code is a debugging nicety — never fail a finished render over it.
       console.warn(`[Job ${jobId}] could not upload ${entry.name}:`, err);
-    });
-  }
+    }));
 }
 
 /**

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { USER_ID_HEADER } from './requestUser';
 
 const PUBLIC_PATHS = ['/login', '/auth'];
 
@@ -20,7 +21,15 @@ const SETUP_MESSAGE =
   'server will not pick them up until it restarts.';
 
 export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  // Any inbound copy of the identity header is discarded before we set our own,
+  // so a client cannot present itself as another user.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.delete(USER_ID_HEADER);
+
+  // Cookies are collected rather than written straight onto a response, because
+  // the response can only be built once the user id is known — and rebuilding it
+  // afterwards would drop the refreshed session cookies on the floor.
+  let pendingCookies: Array<{ name: string; value: string; options?: Record<string, unknown> }> = [];
 
   // Referenced as literals, not via a helper: Next inlines NEXT_PUBLIC_* at
   // build time, and dynamic process.env[name] lookups are undefined on the edge.
@@ -51,10 +60,7 @@ export async function updateSession(request: NextRequest) {
           for (const { name, value } of cookiesToSet) {
             request.cookies.set(name, value);
           }
-          response = NextResponse.next({ request });
-          for (const { name, value, options } of cookiesToSet) {
-            response.cookies.set(name, value, options);
-          }
+          pendingCookies = pendingCookies.concat(cookiesToSet as typeof pendingCookies);
         },
       },
     },
@@ -71,13 +77,24 @@ export async function updateSession(request: NextRequest) {
     console.error('[middleware] session check failed:', error);
   }
 
+  // Route handlers read this instead of making their own getUser() call.
+  if (user) requestHeaders.set(USER_ID_HEADER, user.id);
+
   const { pathname } = request.nextUrl;
   if (!user && !isPublic(pathname) && !pathname.startsWith('/api/')) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     url.searchParams.set('next', pathname);
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    for (const { name, value, options } of pendingCookies) {
+      redirect.cookies.set(name, value, options as never);
+    }
+    return redirect;
   }
 
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  for (const { name, value, options } of pendingCookies) {
+    response.cookies.set(name, value, options as never);
+  }
   return response;
 }

@@ -3,6 +3,7 @@ import type { ManimateJobRequest } from '@/src/types/manimate';
 import { createInitialMetadata, createJobId, listJobs } from '@/src/lib/manimate/jobStore';
 import { runPipeline } from '@/src/lib/manimate/pipeline';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -37,7 +38,7 @@ function buildPayload(body: Record<string, unknown>): Partial<ManimateJobRequest
 export async function GET() {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await requestUser();
     if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
     // RLS on public.jobs scopes this to the caller's own rows.
@@ -51,7 +52,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await requestUser();
     if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
     const body = await request.json();

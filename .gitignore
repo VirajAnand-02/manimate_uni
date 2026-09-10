@@ -12,3 +12,4 @@ manim-env/
 .next/
 build.log
 tsconfig.tsbuildinfo
+envi.env.old

@@ -4,6 +4,7 @@ import { deleteJob, patchMetadata, readMetadata } from '@/src/lib/manimate/jobSt
 import { removeJobArtifacts } from '@/src/lib/manimate/storage';
 import { removeJobWorkDir, isValidJobId } from '@/src/lib/manimate/workspace';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -18,7 +19,7 @@ export async function GET(
   }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await requestUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   // RLS returns nothing for another user's job, so this 404s rather than leaking.
@@ -38,7 +39,7 @@ export async function DELETE(
   }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await requestUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const { searchParams } = new URL(request.url);

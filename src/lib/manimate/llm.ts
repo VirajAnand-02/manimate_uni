@@ -3,6 +3,7 @@ import { createMistral } from '@ai-sdk/mistral';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createGroq } from '@ai-sdk/groq';
 import { CORRECTION_PROMPT, MANIM_PROMPT, PLANNER_PROMPT, QUIZ_PROMPT } from './prompts';
 
 type ChatMessage = { role: 'system' | 'user'; content: string };
@@ -26,6 +27,9 @@ function getKeysForProvider(provider: string): string[] {
   } else if (p === 'google') {
     envKeys = process.env.GOOGLE_API_KEYS || '';
     envKey = process.env.GOOGLE_API_KEY || '';
+  } else if (p === 'groq') {
+    envKeys = process.env.GROQ_API_KEYS || '';
+    envKey = process.env.GROQ_API_KEY || '';
   }
   
   const raw = [envKeys, envKey].join(',');
@@ -48,7 +52,11 @@ export function resolveProviderAndModel(requestProvider?: string, requestModel?:
   let provider = (requestProvider || process.env.MANIMATE_MODEL_PROVIDER || 'mistralai').trim().toLowerCase();
   let model = (requestModel || process.env.MANIMATE_MODEL || 'mistral-large-2512').trim();
 
-  if (model.includes('/')) {
+  // "provider/model" is the custom-override syntax, and only applies when the
+  // caller did not name a provider. Groq's own ids contain slashes
+  // (openai/gpt-oss-120b), so splitting an explicit groq request would route it
+  // to OpenAI with an OpenAI key.
+  if (!requestProvider && model.includes('/')) {
     const parts = model.split('/');
     provider = parts[0].trim().toLowerCase();
     model = parts.slice(1).join('/').trim();
@@ -71,17 +79,51 @@ function getAIModel(provider: string, modelName: string) {
       return createAnthropic({ apiKey })(modelName);
     case 'google':
       return createGoogleGenerativeAI({ apiKey })(modelName);
+    case 'groq':
+      return createGroq({ apiKey })(modelName);
     default:
-      throw new Error(`Unsupported LLM provider: "${provider}". Supported providers are: mistral, openai, anthropic, google.`);
+      throw new Error(`Unsupported LLM provider: "${provider}". Supported providers are: mistral, openai, anthropic, google, groq.`);
   }
 }
 
 function extractJson(text: string) {
-  const stripped = text.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
-  const start = stripped.indexOf('{');
-  const end = stripped.lastIndexOf('}');
-  if (start >= 0 && end > start) return stripped.slice(start, end + 1);
-  return stripped;
+  // Reasoning models (Groq's qwen/gpt-oss line) can emit a <think> block ahead
+  // of the answer, and it usually contains braces of its own.
+  let stripped = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // Prefer a fenced block wherever it sits, not only at the very ends.
+  const fenced = stripped.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) stripped = fenced[1].trim();
+
+  // Return the *first balanced* value. Slicing first-"{" to last-"}" instead
+  // swallowed anything brace-bearing that followed the JSON (a stray brace, a
+  // second object, trailing commentary), and JSON.parse would then read one
+  // complete value and throw "Unexpected non-whitespace character after JSON".
+  const start = stripped.search(/[{[]/);
+  if (start < 0) return stripped;
+
+  const open = stripped[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < stripped.length; i++) {
+    const ch = stripped[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === open) depth++;
+    else if (ch === close && --depth === 0) return stripped.slice(start, i + 1);
+  }
+
+  // Unbalanced — a truncated response. Hand it back whole so JSON.parse
+  // reports the real position instead of a slice artefact.
+  return stripped.slice(start);
 }
 
 export async function aiSdkChat(

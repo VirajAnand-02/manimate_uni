@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { generateTtsAudio } from '@/src/lib/manimate/tts';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -9,7 +10,7 @@ export async function POST(request: Request) {
   try {
     // Synthesis is real CPU work; don't hand it out anonymously.
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await requestUser();
     if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
     const body = await request.json();

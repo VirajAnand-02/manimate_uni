@@ -6,7 +6,7 @@ Manimate Uni is an agentic Next.js application that translates educational topic
 
 ## 🚀 Key Features
 
-* **Multi-LLM Provider Engine (Vercel AI SDK)**: Supports OpenAI, Anthropic, Google Gemini, and Mistral AI. Includes dynamic model presets, custom `provider/model` overrides, and round-robin key rotation per provider.
+* **Multi-LLM Provider Engine (Vercel AI SDK)**: Supports OpenAI, Anthropic, Google Gemini, Mistral AI, and Groq. Includes dynamic model presets, custom `provider/model` overrides, and round-robin key rotation per provider.
 * **Local Subprocess Pipeline**: Executes the Python compiler to run Manim CLI renders and FFMPEG to mux voiceovers and stitch scenes.
 * **Self-Correcting Rendering Loop**: If the LLM generates Manim code that fails to compile, the pipeline captures the traceback, invokes the corrector LLM, and repairs the script on the fly (up to 3 retries).
 * **Dynamic Scene Pacing**: Calculates scene durations from voiceover length ($\text{duration} = \lceil\text{chars} / 15\rceil + 3$ seconds) to avoid silent pauses or frozen video tracks.
@@ -33,6 +33,14 @@ For throughput without rate-limiting, provide comma-separated keys (e.g. `OPENAI
 ### 3. Single-process render queue
 
 Renders run in-process as detached promises, gated by an in-memory semaphore (`MAX_CONCURRENT_JOBS`, default 1). This means the app **must run as a single, always-on instance** — see Deployment below. Jobs orphaned by a restart are failed automatically at boot (`src/lib/manimate/reaper.ts`).
+
+### 4. How work is scheduled inside a job
+
+`import manim` costs ~3.4s and used to be paid once per scene, per correction attempt. Every scene in a module is therefore rendered by a **single Manim process** (their class names are rewritten to stay unique), and modules render **in parallel** up to `MANIM_RENDER_CONCURRENCY`. If the batch fails — a syntax error takes the whole file down, and two scenes can collide on a helper name — the scenes it did not produce fall back to individual renders with the usual correction loop.
+
+Voiceover synthesis no longer waits for rendering. Its input is the lecture plan's text, so Kokoro starts as soon as the plan exists and runs alongside code generation and rendering; only the ffmpeg mux needs both halves. Manim's LaTeX and text caches are shared across the whole job rather than thrown away per attempt.
+
+Progress is merged inside Postgres by `update_job_stage()` (migration `0002`), which makes each tick one round trip instead of two and keeps concurrent stage updates from clobbering each other.
 
 ---
 
@@ -62,7 +70,7 @@ manim --version
 ### 3. Supabase project
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Apply the schema — either `supabase db push`, or paste `supabase/migrations/0001_init.sql` into the SQL Editor. This creates the `jobs` table, its RLS policies, the private `generations` bucket, and the bucket's access policies.
+2. Apply the schema — either `supabase db push`, or paste each file in `supabase/migrations/` into the SQL Editor in order. `0001_init.sql` creates the `jobs` table, its RLS policies, the private `generations` bucket, and the bucket's access policies; `0002_stage_progress_rpc.sql` adds the progress-merge function. The app falls back to a slower client-side merge if `0002` is missing, and logs a warning saying so.
 3. For a quick start, turn **off** email confirmation under *Authentication → Providers → Email*, so sign-up gives you a session immediately.
 4. Copy the Project URL, `anon` key, and `service_role` key from *Project Settings → API*.
 
@@ -76,7 +84,7 @@ cp .env.example .env.local
 Fill in `.env.local`:
 
 * **Supabase**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-* **At least one LLM provider**: `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY`.
+* **At least one LLM provider**: `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or `GROQ_API_KEY`.
 * **Python**: `MANIM_PYTHON` — the absolute path to your venv interpreter (`manim-env/Scripts/python.exe` on Windows, `manim-env/bin/python` elsewhere).
 * **Scratch dir**: `MANIMATE_WORK_DIR` — defaults to a `manimate` folder in your system temp dir.
 
@@ -108,7 +116,7 @@ The image bundles Node, Python + Manim, ffmpeg, a TeX Live subset, and the pre-d
 | Requirement | Why |
 | :--- | :--- |
 | **Scale-to-zero / sleep disabled** | `POST /api/generate` returns `202` and keeps rendering in the background. If the platform suspends the instance after the response, every job dies mid-render. |
-| **≥ 2 vCPU, ≥ 4 GB RAM** | Manim at 720p30 will OOM a 512 MB instance. |
+| **≥ 2 vCPU, ≥ 4 GB RAM** | Manim at 720p30 will OOM a 512 MB instance. Scenes render in parallel, so extra cores are used — `MANIM_RENDER_CONCURRENCY` defaults to cores-1 (max 4), and each concurrent render holds a few hundred MB. |
 | **Single instance** | The render queue and cancellation registry are in-process. Multiple replicas would exceed `MAX_CONCURRENT_JOBS` and break job cancellation. |
 | Ephemeral disk is fine | Local disk is scratch only; durable state is in Supabase. |
 

@@ -8,6 +8,18 @@ function sanitizeBase(name: string) {
   return sanitizeSegment(name, `tts_${Date.now()}`);
 }
 
+/**
+ * Load the Kokoro ONNX weights into the process.
+ *
+ * Call this early: the model load is several seconds and used to land on the
+ * first voiceover, which is the moment rendering finishes — squarely on the
+ * critical path. Failures are deliberately not fatal, since the lazy path in
+ * generateTtsAudio will surface them properly.
+ */
+export function prewarmTts() {
+  getTts().catch((err) => console.warn('[tts] prewarm failed:', err?.message ?? err));
+}
+
 async function getTts() {
   if (!ttsPromise) {
     const runtimeImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;

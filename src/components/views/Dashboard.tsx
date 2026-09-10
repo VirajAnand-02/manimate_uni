@@ -47,6 +47,13 @@ export default function Dashboard() {
       { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
       { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
     ],
+    groq: [
+      { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+      { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B' },
+      { value: 'qwen/qwen3.8-27b', label: 'Qwen3.8 27B' },
+      { value: 'qwen/qwen3.6-27b', label: 'Qwen3.6 27B' },
+      { value: 'groq/compound', label: 'Groq Compound' },
+    ],
   };
   const [topicDepth, setTopicDepth] = useState<'brief' | 'normal' | 'deep'>('normal');
   const [skipVoiceovers, setSkipVoiceovers] = useState(false);
@@ -223,6 +230,7 @@ export default function Dashboard() {
                           <option value="openai">OpenAI</option>
                           <option value="anthropic">Anthropic</option>
                           <option value="google">Google Gemini</option>
+                          <option value="groq">Groq</option>
                           <option value="custom">Custom (provider/model)</option>
                         </select>
                       </div>

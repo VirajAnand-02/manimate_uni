@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { listJobs } from '@/src/lib/manimate/jobStore';
 import { queueStats } from '@/src/lib/manimate/queue';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,7 +15,7 @@ export async function GET() {
   let ownPending = 0;
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await requestUser();
     if (user) {
       const jobs = await listJobs(supabase);
       ownPending = jobs.filter((j) => j.status === 'pending' || j.status === 'queued').length;

@@ -3,6 +3,7 @@ import { readFinalVideoPath } from '@/src/lib/manimate/jobStore';
 import { signedUrl } from '@/src/lib/manimate/storage';
 import { isValidJobId } from '@/src/lib/manimate/workspace';
 import { createClient } from '@/src/lib/supabase/server';
+import { requestUser } from '@/src/lib/supabase/requestUser';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,7 +27,7 @@ export async function GET(
   }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await requestUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   // Reading through the RLS client is the ownership check: another user's job

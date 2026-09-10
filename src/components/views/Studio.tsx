@@ -105,13 +105,30 @@ export default function Studio({ jobId }: StudioProps) {
       return;
     }
 
-    let pollInterval: NodeJS.Timeout | undefined = undefined;
+    // Adaptive polling. A fixed 2s tick meant a ten-minute render issued ~300
+    // requests per viewer, most of them returning byte-identical progress. The
+    // interval widens while nothing changes and snaps back the moment it does,
+    // so a busy stage still feels live.
+    const MIN_DELAY = 2000;
+    const MAX_DELAY = 15000;
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = MIN_DELAY;
+    let lastSignature = '';
+
+    const stop = () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
 
     const fetchJob = async () => {
+      if (stopped) return;
       try {
         const res = await fetch(`/api/generate/${jobId}`);
+        if (stopped) return;
         if (res.status === 401) {
-          clearInterval(pollInterval);
+          stop();
           return redirectToLogin();
         }
         if (!res.ok) {
@@ -120,23 +137,35 @@ export default function Studio({ jobId }: StudioProps) {
           return;
         }
         const data = (await res.json()) as StudioJob;
+        if (stopped) return;
         setJobData(data);
         setLoading(false);
 
         if (data.status === 'completed' || data.status === 'failed') {
-          clearInterval(pollInterval);
+          stop();
+          return;
+        }
+
+        const signature = `${data.status}|${data.current_stage}|${data.overall_progress}`;
+        if (signature === lastSignature) {
+          delay = Math.min(MAX_DELAY, Math.round(delay * 1.5));
+        } else {
+          lastSignature = signature;
+          delay = MIN_DELAY;
         }
       } catch (err) {
         console.error("Fetch job error:", err);
         setError("Error communicating with pipeline server.");
         setLoading(false);
+        delay = Math.min(MAX_DELAY, Math.round(delay * 1.5));
+      } finally {
+        if (!stopped) timer = setTimeout(fetchJob, delay);
       }
     };
 
     fetchJob();
-    pollInterval = setInterval(fetchJob, 2000);
 
-    return () => clearInterval(pollInterval);
+    return stop;
   }, [jobId]);
 
   const handleCancel = useCallback(async () => {
