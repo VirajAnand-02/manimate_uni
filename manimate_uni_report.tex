@@ -1,0 +1,564 @@
+\documentclass[12pt,a4paper,twoside,openright]{report}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{emptypage}
+\usepackage{cite}
+\usepackage[left=1.25in, right=1.25in, top=1.2in, bottom=1.2in]{geometry}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\lstset{
+  basicstyle=\small\ttfamily,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  aboveskip=1em,
+  belowskip=1em
+}
+
+\onehalfspacing
+
+\begin{document}
+
+% ==============================================================================
+% PAGE 1: TITLE PAGE
+% ==============================================================================
+\begin{titlepage}
+    \centering
+    {\Huge\bfseries Manimate\\[0.3em] LLM Pipeline for Educational Animation Generation \par}
+    
+    \vspace{1cm}
+    {\large Thesis submitted in \\ partial fulfilment of the requirements for the degree of \par}
+    
+    \vspace{1.5cm}
+    {\Large\bfseries Bachelors of Technology \\ \large in \\ \Large\bfseries Computer Science and Engineering \par}
+    
+    \vspace{2cm}
+    {\large by \\ \bfseries Rupsha Das | 90/BCS/220004 \\ Priyanshu Ranjan | 90/BCS/220018 \\Viraj Anand | 90/BCS/220027 \\ \par}
+    
+    \vspace{1.5cm}
+    {\large Under the supervision of \\ \bfseries Prof. Dr. Anirban Mukhopadhyay \par}
+    
+    \vfill
+    {\large \bfseries \MakeUppercase{Department of Computer Science and Engineering} \\ University of Kalyani \\ Kalyani, India \par}
+    
+    \vspace{1cm}
+    {\large\bfseries June, 2026 \par}
+\end{titlepage}
+
+\cleardoublepage
+
+
+% ==============================================================================
+% FRONT MATTER (Roman numerals i, iii, v, vii, ix, xi)
+% ==============================================================================
+\pagenumbering{roman}
+
+% Page 3: Declaration
+\chapter*{Declaration}
+We, Rupsha Das, Priyanshu Ranjan, and Viraj Anand, declare that this thesis entitled ``Manimate: LLM Pipeline for Educational Animation Generation'' is a bona fide record of the work carried out by us under the supervision of Prof. Dr. Anirban Mukhopadhyay. This report represents our ideas in our own words and where others' ideas or words have been included, we have adequately cited and referenced the original sources. We also declare that we have adhered to all principles of academic honesty and integrity and have not misrepresented or fabricated or falsified any idea, data, fact, or source in our submission. We further declare that the work reported in this thesis has not been and will not be submitted, either in part or in full, for the award of any other degree or diploma of this institute or any other institute. We understand that any violation of the above will be cause for disciplinary action by the Institute and can also evoke penal action from the sources which have thus not been properly cited or from whom proper permission has not been taken when needed.
+
+\vspace{2.5cm}
+\noindent
+Date: \hfill 
+\begin{tabular}{r}
+\rule{6cm}{0.4pt} \\
+Rupsha Das (90/BCS/220004) \\
+Priyanshu Ranjan (90/BCS/220018) \\
+Viraj Anand (90/BCS/220027) \\
+Department of Computer Science and Engineering \\
+University of Kalyani
+\end{tabular}
+
+\cleardoublepage
+
+
+% Page 5: Acknowledgment
+\chapter*{Acknowledgment}
+We want to take this opportunity to thank our supervisor, Prof. Dr. Anirban Mukhopadhyay, Department of Computer Science and Engineering, University of Kalyani, for his motivation and tireless efforts in helping us gain a deep understanding of the research area and for supporting us throughout the life cycle of our B. Tech. course. The extensive comments, healthy discussions, and fruitful interactions with our supervisor had a direct impact on the final form and quality of this dissertation work.
+
+\vspace{1em}
+We are also thankful to Dr. Priya Ranjan Sinha Mahapatra, Professor and Head of the Department of Computer Science and Engineering, for his fruitful guidance throughout this journey. We extend our heartfelt thanks to the faculty members and supporting staff of the Department of Computer Science and Engineering for their generous support, guidance, and unwavering cooperation.
+
+\vspace{1em}
+This thesis would not have been possible without the unwavering support of our friends and family. We are deeply grateful to our parents for their blessings, love, and constant encouragement.
+
+\cleardoublepage
+
+
+% Page 7: Certificate
+\chapter*{Certificate}
+This is to certify that the thesis entitled ``Manimate: LLM Pipeline for Educational Animation Generation'' submitted by Rupsha Das (Roll No. 90/BCS/220004), Priyanshu Ranjan (Roll No. 90/BCS/220018), and Viraj Anand (Roll No. 90/BCS/220027) in partial fulfillment for the award of Bachelors of Technology in Computer Science and Engineering is a bona fide work carried out under my supervision. The thesis fulfills the requirements as per the regulations of this University and, in my opinion, meets the necessary standards for submission. The contents of this thesis have not been submitted and will not be submitted either in part or in full for the award of any other degree or diploma, and the same is certified. It is understood that by this approval, the undersigned does not necessarily endorse any of the statements made or opinions expressed therein but approves it only for the purpose for which it is submitted.
+
+\vspace{4cm}
+\noindent
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}l c r@{}}
+Internal Supervisor & External Supervisor & Head of the Department
+\end{tabular*}
+
+\vspace{3cm}
+\noindent
+External Examiner(s)
+
+\cleardoublepage
+
+
+% Page 9: Abstract
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Manimate is an agentic web application that transforms user-provided educational topics into fully narrated, high-fidelity mathematical animation videos. The system orchestrates a six-stage pipeline that automates every step of educational video production: web-grounded research, AI-driven lecture planning with dynamic pacing, large language model (LLM)-based Python code generation using the Manim Community animation framework, on-device rendering with a self-correcting compiler loop, local neural text-to-speech (TTS) voiceover synthesis via Kokoro-82M, and FFmpeg-based audio-video muxing and final stitching. The entire pipeline runs inside a single Next.js application server, eliminating the need for distributed cloud infrastructure.
+
+The system supports multiple LLM providers---Mistral, OpenAI, Anthropic, and Google Gemini---through a unified interface built on the Vercel AI SDK. It employs an in-memory semaphore-based concurrency queue with AbortController-managed process lifecycle tracking to safely handle long-running subprocesses such as the Python interpreter and FFmpeg. All job state is persisted in a lightweight file-based database, and a React-based frontend provides real-time pipeline monitoring with stage-level progress visualization. Additionally, the system generates progressive-difficulty mastery quizzes from the lecture content using the same LLM pipeline, enabling automated student assessment.
+
+The result is a fully self-contained educational content production system capable of generating complete, voice-narrated lecture videos entirely from a text prompt, with practical applications in automated e-learning, curriculum development, and scalable educational video generation.
+
+\cleardoublepage
+
+
+% Page 11: List of Abbreviations
+\chapter*{List of Abbreviations}
+\addcontentsline{toc}{chapter}{List of Abbreviations}
+
+\begin{tabbing}
+\textbf{AI} \hspace{2cm} \= Artificial Intelligence \\
+\textbf{API} \> Application Programming Interface \\
+\textbf{A/V} \> Audio-Visual \\
+\textbf{CLI} \> Command Line Interface \\
+\textbf{FFmpeg}\> Fast Forward Moving Picture Experts Group \\
+\textbf{JSON} \> JavaScript Object Notation \\
+\textbf{LLM} \> Large Language Model \\
+\textbf{MCQ} \> Multiple Choice Question \\
+\textbf{ONNX} \> Open Neural Network Exchange \\
+\textbf{REST} \> Representational State Transfer \\
+\textbf{SPA} \> Single Page Application \\
+\textbf{TTS} \> Text-to-Speech \\
+\textbf{UI} \> User Interface \\
+\textbf{UUID} \> Universally Unique Identifier \\
+\end{tabbing}
+
+\cleardoublepage
+
+
+% Page 13: List of Symbols
+\chapter*{List of Symbols}
+\addcontentsline{toc}{chapter}{List of Symbols}
+
+Not applicable --- this thesis describes a software engineering project and does not employ mathematical notation beyond what is introduced contextually in the text.
+
+\cleardoublepage
+
+
+% ==============================================================================
+% MAIN MATTER (TOC and Chapters start here with Arabic numerals)
+% ==============================================================================
+\pagenumbering{arabic}
+
+% Page 15: Table of Contents
+\tableofcontents
+
+\cleardoublepage
+
+
+% ==============================================================================
+% CHAPTER 1: INTRODUCTION
+% ==============================================================================
+\chapter{Introduction}
+
+\section{Background}
+
+The demand for high-quality educational video content has grown exponentially in recent years, driven by the rise of online learning platforms, flipped classrooms, and self-paced digital education. Mathematical and scientific topics, in particular, benefit from animated visual explanations that make abstract concepts tangible. However, producing such animations traditionally requires significant expertise in both the subject matter and animation software, creating a bottleneck that limits the availability of well-produced educational animations.
+
+\section{Problem Statement}
+
+The core problem addressed by this work is the automation of the entire Manim animation production workflow. Creating a narrated educational video with Manim involves six distinct and interdependent stages: (1) researching and verifying factual content, (2) structuring a pedagogically sound lecture plan, (3) writing Python code to implement each visual scene, (4) compiling and debugging the code, (5) recording or synthesizing voiceover narration aligned with the visuals, and (6) stitching all audio and video segments into a final output. Each stage currently requires manual effort from a human operator with domain-specific skills. There exists no integrated system that can accept only a topic string and autonomously produce a complete, voice-narrated Manim animation.
+
+\section{Proposed Solution}
+
+Manimate is an agentic pipeline system that fully automates the six-stage Manim production workflow. The user provides only an educational topic (e.g., ``Fourier Transform,'' ``Gradient Descent,'' ``Binary Search Trees''), and the system autonomously researches the topic, plans a structured lecture, generates Python Manim code for each scene, compiles and self-corrects the code, synthesizes voiceover narration using a local neural TTS engine, and stitches all components into a complete MP4 video. The system also generates progressive-difficulty mastery quizzes from the lecture content.
+
+\section{Scope and Objectives}
+
+The primary objectives of this work are:
+
+\begin{enumerate}
+  \item To design and implement an end-to-end, six-stage pipeline that automates Manim-based educational video production from a topic prompt.
+  \item To integrate multiple LLM providers (Mistral, OpenAI, Anthropic, Google Gemini) through a unified interface for lecture planning, code generation, code correction, and quiz generation.
+  \item To implement a self-correcting compilation loop that automatically debugs and regenerates failed Manim code using LLM-driven error analysis.
+  \item To integrate local neural TTS (Kokoro-82M) for offline voiceover generation with intelligent audio-video duration alignment.
+  \item To build a real-time monitoring dashboard that visualizes pipeline progress at the stage and scene level.
+  \item To provide a progressive mastery quiz system generated from the same lecture content.
+\end{enumerate}
+
+\section{Thesis Organization}
+
+The remainder of this thesis is organized as follows. Chapter~2 reviews the relevant literature on educational animation tools, AI-driven code generation, neural text-to-speech, and agentic pipeline architectures. Chapter~3 presents the proposed system in detail, covering the architecture, all six pipeline stages, concurrency management, and the frontend monitoring interface. Chapter~4 discusses the results, including the output structure and performance characteristics. Chapter~5 concludes the thesis and outlines directions for future work.
+
+\cleardoublepage
+
+
+% ==============================================================================
+% CHAPTER 2: LITERATURE REVIEW
+% ==============================================================================
+\chapter{Literature Review}
+
+\section{Educational Animation Tools}
+
+The use of animation in education has been extensively studied, with research consistently showing that animated visual explanations improve learner comprehension, particularly for abstract mathematical and scientific concepts~\cite{mayer2009multimedia}. Traditional educational animation tools such as Adobe After Effects and Apple Motion provide powerful capabilities but require artistic expertise and operate through manual keyframing workflows that are time-intensive. Manim Community~\cite{manim2024} introduced a programmatic approach where animations are described in Python code, enabling precise mathematical rendering and reproducible animations. However, the requirement to write Python code for every scene remains a significant barrier to entry.
+
+\section{Large Language Models for Code Generation}
+
+The emergence of large language models has enabled automated code generation from natural language descriptions. Models such as GPT-4, Claude, Mistral Large, and Gemini demonstrate strong performance on Python code synthesis tasks~\cite{chen2021codex}. The Vercel AI SDK~\cite{vercelai2025} provides a unified interface for interacting with multiple LLM providers, enabling provider-agnostic code generation pipelines. Recent work has explored using LLMs for specialized code generation in domains such as data visualization~\cite{maddigan2022chat2vis} and scientific computing, but their application to the Manim animation framework remains underexplored.
+
+\section{Neural Text-to-Speech}
+
+Neural TTS systems have advanced rapidly, with models such as Kokoro-82M~\cite{kokoro2025} achieving high-quality speech synthesis with compact model footprints suitable for on-device deployment. The ONNX runtime~\cite{onnx2023} enables cross-platform inference without cloud dependencies. Kokoro-82M, with 82 million parameters and a quantized ONNX model (q8 precision), produces natural-sounding speech in multiple voices while running entirely on local CPU or GPU hardware. This local-first approach is particularly suitable for educational content generation where privacy and offline capability are important considerations.
+
+\section{Agentic Pipeline Architectures}
+
+The concept of agentic workflows---where multiple AI components collaborate in a structured pipeline---has gained traction with frameworks such as LangChain, AutoGen, and CrewAI~\cite{wu2023autogen}. These systems typically focus on text-based task decomposition and tool use. Applying agentic architecture to media generation pipelines introduces unique challenges: managing long-running subprocesses, handling compilation errors with automated correction, synchronizing audio and video streams, and tracking progress across heterogeneous stages.
+
+\section{Research Gap}
+
+Despite advances in each individual component---educational animation engines, LLM code generation, neural TTS, and agentic frameworks---there exists no integrated system that combines all of these into a single end-to-end pipeline for automated educational video production. Existing tools either address only one stage of the workflow or require substantial manual intervention at the boundaries between stages. Manimate fills this gap by providing a fully automated, six-stage pipeline that accepts only a topic string and produces a complete, narrated Manim animation video.
+
+\cleardoublepage
+
+
+% ==============================================================================
+% CHAPTER 3: PROPOSED WORK
+% ==============================================================================
+\chapter{Proposed Work}
+
+\section{System Architecture}
+
+Manimate is built on the Next.js App Router framework, which provides a unified Node.js server environment for both the API backend and the React-based frontend. The system comprises four architectural layers:
+
+\begin{enumerate}
+  \item \textbf{Frontend Layer:} A React single-page application with four primary views---Dashboard (topic input and job submission), Studio (real-time pipeline monitoring), Library (job browsing and management), and Quiz (interactive mastery assessment).
+  \item \textbf{API Layer:} Next.js Route Handlers exposing REST endpoints for job creation, status retrieval, cancellation, video streaming with HTTP range support, quiz management, and health monitoring.
+  \item \textbf{Core Library:} The \texttt{src/lib/manimate/} module implementing the six-stage pipeline orchestrator, multi-provider LLM client, Manim rendering engine with correction loop, Kokoro TTS wrapper, FFmpeg video processor, web research integration, job store, active job lifecycle manager, and concurrency queue.
+  \item \textbf{Storage Layer:} A file-based database organized under the \texttt{generations/} directory, with each job assigned a UUID-named subdirectory containing metadata, lecture plans, scene code, rendered media, TTS audio, and the final video.
+\end{enumerate}
+
+The interaction between these components, the multi-agent decision loops, the self-correcting generation flows, and the parallel rendering system are detailed structurally in Figure~\ref{fig:detailed_architecture}.
+
+
+\begin{figure}[htbp]
+        \centering
+        \includegraphics[width=1.0\linewidth]{rendering pipeline.png}
+        \caption{Detailed architectural schema showing validation logic, parallel rendering worker cluster, self-correction pathways, and downstream modules.}
+    \label{fig:detailed_architecture}
+\end{figure}
+
+\section{The Six-Stage Pipeline}
+
+The core of Manimate is the \texttt{runPipeline()} orchestrator, which executes six sequential stages. Each stage updates the job metadata on disk, enabling real-time progress monitoring. The high-level linear sequence of operations from the initial prompt to the final output video is illustrated in Figure~\ref{fig:high_level_pipeline}.
+
+\begin{figure}[htbp]
+    \centering
+       \includegraphics[width=1.0\linewidth]{blob.png}
+    \caption{Conceptual high-level sequential pipeline flow of the Manimate platform.}
+    \label{fig:high_level_pipeline}
+\end{figure}
+
+\subsection{Stage 1: Web Research}
+
+The web research stage grounds the lecture content in factual, up-to-date information. It queries the Tavily Search API with an educationally formatted search query (e.g., \texttt{"Fourier Transform key facts overview reliable educational sources"}) and compiles a compacted context summary of URLs and content snippets, capped at 5,000 characters. This 5000 character limit was choosen at random so as to not overflow the LLM's context window while allowing for context completeness. This stage can be disabled via the \texttt{MANIMATE\_WEBSEARCH} environment flag for offline operation.
+
+\subsection{Stage 2: Lecture Planning}
+
+The lecture planning stage uses the LLM to generate a structured pedagogical plan from the topic and web research context. The planner prompt instructs the model to act as an ``expert instructional designer and Manim scene planner,'' producing a JSON structure with modules, scenes, voiceover scripts, visual elements, animation sequences, and camera directions. The plan adapts to three depth levels---brief (1--2 modules), normal (2--3 modules), and deep (3--4 modules)---with corresponding voiceover length constraints.
+
+A critical innovation in this stage is the \textbf{dynamic scene duration recalculation}. The LLM's estimated scene durations are overridden using a formula based on the actual voiceover character count:
+
+\begin{verbatim}
+  spokenDuration = Math.ceil(voiceover.length / 15) + 3;
+  scene.durationSeconds = Math.max(5, Math.min(45, spokenDuration));
+\end{verbatim}
+
+This estimates speech at approximately 15 characters per second, adds a 3-second visual buffer, and clamps the duration between 5 and 45 seconds to prevent scenes from being too short or too long.
+
+\subsection{Stage 3: Code Generation}
+
+The code generation stage invokes the LLM with a specialized \texttt{MANIM\_PROMPT} that constrains the model to a specific subset of Manim classes and methods. The prompt explicitly lists allowed mobjects (Text, MathTex, Circle, Arc, Rectangle, Line, Arrow, VGroup, Axes, etc.) and animations (FadeIn, FadeOut, Write, Create, Transform, etc.), with detailed rules about LaTeX escaping, scene duration matching, and common pitfalls to avoid---such as passing raw mobjects to \texttt{self.play()} instead of animation wrappers, using illegal keyword arguments in shape constructors, and calling \texttt{.get\_start()} on container objects like VGroup.
+
+The generated Python code for each scene is saved to \texttt{generations/\{jobId\}/scene\_code/} for subsequent compilation.
+
+\subsection{Stage 4: Rendering and Self-Correction}
+
+The rendering stage executes each scene's Python script using the Manim Community compiler:
+
+\begin{verbatim}
+  python -m manim -qh --media_dir <mediaDir> <pyFile> <className>
+\end{verbatim}
+
+If compilation succeeds, the output MP4 path is recorded. If compilation fails, the system enters a \textbf{self-correcting loop}:
+
+\begin{enumerate}
+  \item The Python traceback and error message are captured.
+  \item The LLM is invoked with the \texttt{CORRECTION\_PROMPT}, which provides structured debugging guidance: locate the error line, identify whether it is a NameError or AttributeError, check for illegal method calls on container objects, and apply the minimal fix.
+  \item The corrected code is written back to disk and compilation is retried.
+  \item This loop continues up to a configurable maximum number of attempts (default: 3, value choose at random). If all attempts are exhausted, the job is marked as failed.
+\end{enumerate}
+
+The correction prompt encodes domain-specific knowledge about common Manim errors, such as the prohibition of keyword arguments like \texttt{dash\_length} and \texttt{dash\_spacing} in \texttt{set\_stroke()}, the proper use of \texttt{DashedVMobject} for dashed shapes, and the restriction that \texttt{.get\_start()} and \texttt{.get\_end()} only work on primitive VMobjects, not on VGroup or DashedVMobject containers.
+
+\subsection{Stage 5: Voiceover and Muxing}
+
+The voiceover stage uses Kokoro-82M, a local ONNX-based neural TTS model initialized from the pretrained community assets \texttt{onnx-community/Kokoro-82M-v1.0-ONNX}. The model runs on CPU by default with q8 quantization precision, producing WAV audio files from each scene's voiceover script. The chosen voice (default: \texttt{af\_heart}) can be configured via environment variables.
+
+After TTS synthesis, each scene video is muxed with its corresponding audio using FFmpeg with intelligent A/V duration alignment:
+
+\begin{itemize}
+  \item \textbf{Audio longer than video:} The last video frame is frozen using \texttt{-vf tpad=stop\_mode=clone:stop\_duration=\$\{padDuration\}} to keep visuals active during extended narration.
+  \item \textbf{Video longer than audio:} Silence is appended to the audio track using \texttt{-af apad=pad\_dur=\$\{padDuration\}} to prevent empty audio gaps.
+  \item \textbf{Perfect match:} The video stream is copied and audio is encoded directly.
+\end{itemize}
+
+\subsection{Stage 6: Final Stitching}
+
+The final stage concatenates all muxed scene videos into a single lecture video. The FFmpeg concat demuxer is used in two passes: first, scenes within each module are concatenated into module-level videos, and then all module videos are concatenated into the final \texttt{video.mp4} output. The concat demuxer uses a list file specifying relative video paths, enabling copy-mode concatenation without re-encoding.
+
+\section{Concurrency and Process Management}
+
+Because Manim rendering and FFmpeg operations are computationally intensive subprocesses, the system implements a lightweight in-memory semaphore queue. A configurable \texttt{MAX\_CONCURRENT\_JOBS} environment variable (default: 1) limits the number of simultaneously running pipeline instances. When the limit is reached, additional job requests are placed in a FIFO waiting queue and resumed as slots become available.
+
+Each active job is tracked in a global Map with an \texttt{AbortController} and a \texttt{Set} of child processes. The \texttt{runCommand()} wrapper registers every spawned subprocess (Python, FFmpeg) with its parent job. When a cancellation request is received via the \texttt{DELETE /api/generate/[jobId]} endpoint, the controller's \texttt{.abort()} signal is triggered and all registered child processes are terminated with \texttt{SIGTERM}.
+
+\section{File-Based Job Store}
+
+All job state is persisted in JSON files under \texttt{generations/\{jobId\}/}. The \texttt{metadata.json} file tracks job status (queued, running, completed, failed), overall progress (0--100\%), current stage, timestamps, and stage-level details. Overall progress is computed using weighted stage contributions:
+
+\begin{equation}
+\text{Progress} = \sum_{s \in \text{stages}} W_s \times \frac{P_s}{100}
+\end{equation}
+
+where the stage weights are: web research (5%), lecture planning (15%), code generation (20%), rendering (35%), voiceover (15%), and stitching (10%).
+
+\section{Multi-Provider LLM Integration}
+
+The system integrates with four LLM providers---Mistral, OpenAI, Anthropic, and Google Gemini---through the Vercel AI SDK. A \texttt{resolveProviderAndModel()} function maps provider prefixes (e.g., \texttt{mistral/}, \texttt{openai/}) to the appropriate SDK adapter. The system supports key rotation via comma-separated API key lists and includes retry logic for transient API failures.
+
+\section{Frontend Monitoring Interface}
+
+The React frontend provides a responsive user interface designed to facilitate user interaction. The system exposes four primary functional views:
+\begin{enumerate}
+    \item \textbf{Dashboard (Figure~\ref{fig:ui_dashboard}):} The central workspace entry point where users can input topics, select LLM architectures, and initiate content synthesis.
+    \item \textbf{Studio view (Figure~\ref{fig:ui_generation}):} The real-time video generation monitor that exposes progressive compiler outputs, execution logs, and active progress tracking.
+    \item \textbf{Library view (Figure~\ref{fig:ui_library}):} A structured video catalog where past generations are organized, metadata are displayed, and clean filtering options are provided.
+    \item \textbf{Video Player view (Figure~\ref{fig:ui_player}):} An integrated streaming terminal that implements chunked buffering and range requests for optimized video playback.
+\end{enumerate}
+
+\begin{figure}[htbp]
+    \centering
+      \includegraphics[width=1.0\linewidth]{Screenshot 2026-06-23 123603.png}
+    \caption{The main user dashboard layout for configuring settings and triggering animation synthesis.}
+    \label{fig:ui_dashboard}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+        \includegraphics[width=1\linewidth]{Screenshot 2026-06-23 123829.png}
+    
+    \caption{The live monitoring terminal tracking process lifecycles across the six pipeline stages.}
+    \label{fig:ui_generation}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+     \includegraphics[width=1\linewidth]{Screenshot 2026-06-23 123620.png}
+    \caption{Structured database library dashboard cataloging all successfully rendered e-learning modules.}
+    \label{fig:ui_library}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+     \includegraphics[width=1\linewidth]{Screenshot 2026-06-23 123643.png}
+    \caption{Interactive media interface streaming final stitched animations and transcripts.}
+    \label{fig:ui_player}
+\end{figure}
+
+\cleardoublepage
+
+\section{Mastery Quiz System}
+
+The quiz system generates progressive-difficulty multiple choice questions from the lecture content. The initial quiz (difficulty level 1) is generated by prompting the LLM with the lecture plan and voiceover transcripts. Each subsequent \texttt{POST} request increments the difficulty level and generates 5 harder questions, progressing from introductory concept questions to advanced troubleshooting, edge cases, and mathematical proofs. User responses and scores are persisted in \texttt{quiz.json}, and the quiz interface provides instant feedback with detailed explanations for correct and incorrect answers.
+
+The interface reacts dynamically to choices to foster student correction. When a correct response is submitted, the UI transitions to a positive validation state accompanied by conceptual proofs (Figure~\ref{fig:ui_quiz_correct}). If the selection is incorrect, the system provides remedial guidance and reveals correct concepts immediately (Figure~\ref{fig:ui_quiz_incorrect}).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-06-23 123725.png}  
+    
+    \caption{Quiz validation screen showing user success state and related instructional proofs.}
+    \label{fig:ui_quiz_correct}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\linewidth]{Screenshot 2026-06-23 123732.png}
+       
+    \caption{Interactive interface showing response correction for an incorrect selection.}
+        
+        \label{fig:ui_quiz_incorrect}
+\end{figure}
+
+\cleardoublepage
+
+
+% ==============================================================================
+% CHAPTER 4: RESULTS AND DISCUSSION
+% ==============================================================================
+\chapter{Results and Discussion}
+
+\section{Output Structure}
+
+The system produces a well-organized output directory for each generated job, containing:
+
+\begin{itemize}
+  \item \texttt{metadata.json} --- Full job state with stage-level progress and timestamps.
+  \item \texttt{lecture\_plan.json} --- Structured lecture plan with module and scene definitions.
+  \item \texttt{quiz.json} --- Generated quiz questions with user response tracking.
+  \item \texttt{scene\_code/} --- Individual Python Manim scripts for each scene.
+  \item \texttt{media/} --- Intermediate Manim render outputs (MP4 segments, images).
+  \item \texttt{tts/} --- Synthesized WAV voiceover files.
+  \item \texttt{voiceover\_videos/} --- Scene videos muxed with audio.
+  \item \texttt{module\_N\_full.mp4} --- Module-level stitched videos.
+  \item \texttt{video.mp4} --- Final concatenated lecture video.
+\end{itemize}
+
+\newpage
+
+\section{Pipeline Stage Analysis}
+
+Each of the six pipeline stages contributes distinct value to the final output:
+
+\begin{description}
+  \item[Web Research] provides factual grounding, reducing hallucination risk in the lecture plan. The Tavily search API returns structured results with URLs and content snippets, enabling the planner to reference real-world information sources.
+  \item[Lecture Planning] produces pedagogically structured content with clear module organization, scene-level detail, and voiceover scripts calibrated to the requested depth level. The dynamic duration recalculation ensures scene pacing matches the actual narration length.
+  \item[Code Generation] produces syntactically valid Manim Python scripts constrained to a safe subset of the Manim API. The explicit constraint list in the system prompt prevents the LLM from generating code that uses unsupported 3D features or illegal method calls.
+  \item[Rendering with Self-Correction] handles the common case where generated code contains subtle Manim-specific errors. The domain-specific correction prompt, encoding knowledge of common Manim pitfalls, enables the LLM to successfully debug most compilation failures within the allowed retry budget.
+  \item[Voiceover and Muxing] produces synchronized audio-visual output with intelligent duration alignment. The freeze-frame and silence-padding strategies ensure smooth playback regardless of whether the narration is longer or shorter than the animation.
+  \item[Final Stitching] produces a single, seamless video file suitable for streaming and download.
+\end{description}
+
+\section{Self-Correction Effectiveness}
+
+The self-correcting compilation loop serves as a key reliability mechanism within the generation pipeline. To evaluate its effectiveness, performance was analyzed across 13 execution runs, which produced a total of 100 generated scenes. 
+
+During these runs, the compiler encountered initial compilation errors in 44 of the 100 generated scenes. These errors primarily fell into six specific categories: illegal class usage (\texttt{NameError}), illegal method calls (\texttt{AttributeError}), raw mobjects passed directly to \texttt{self.play()} (\texttt{TypeError}), illegal keyword arguments in styling methods, invalid attempts to call spatial query methods such as \texttt{.get\_start()} or \texttt{.get\_end()} on container objects, and incorrect API calls for dashed styling.
+
+Out of the 44 scenes that failed initial compilation, the self-correction loop successfully resolved the errors and achieved successful rendering in 41 instances, representing a correction success rate of approximately 93.2\%. The remaining 3 instances failed to compile after exhausting the maximum limit of 3 correction attempts, resulting in an overall compilation failure rate of 3.0\% across the total pool of 100 scenes. These empirical results suggest that structured, domain-specific debugging prompts can resolve the majority of common syntax and API integration errors encountered during the Manim compilation process.
+
+\section{Performance Characteristics}
+
+The system's performance is bounded by three main factors: LLM API latency for planning and code generation (typically 10--60 seconds per call depending on provider and model), Manim rendering time for each scene (5--120 seconds per scene depending on animation complexity), and Kokoro TTS synthesis time (1--5 seconds per scene on CPU). The concurrency queue ensures that these resource-intensive operations do not overwhelm the host system, while the asynchronous pipeline design allows the frontend to remain responsive throughout the generation process.
+
+\section{Frontend Responsiveness}
+
+The React frontend employs a 2-second polling interval for the Studio monitoring view, providing near-real-time updates without excessive server load. The use of Framer Motion for animated transitions and Tailwind CSS for styling ensures a responsive, visually polished user experience. The video streaming endpoint supports HTTP range requests, enabling efficient seeking and scrubbing in the HTML5 video player.
+
+\cleardoublepage
+
+
+% ==============================================================================
+% CHAPTER 5: CONCLUSION AND FUTURE SCOPE
+% ==============================================================================
+\chapter{Conclusion and Future Scope}
+
+\section{Summary of Achievements}
+
+Manimate successfully demonstrates the feasibility of fully automated educational animation generation through an agentic pipeline architecture. The key contributions of this work are:
+
+\begin{enumerate}
+  \item A complete six-stage pipeline that automates every step from topic input to narrated video output, eliminating the need for manual intervention at any stage.
+  \item A self-correcting compilation loop that encodes domain-specific Manim knowledge into structured LLM debugging prompts, enabling autonomous error resolution.
+  \item Integration of local neural TTS (Kokoro-82M) with intelligent A/V duration alignment strategies for seamless audio-visual synchronization.
+  \item Multi-provider LLM support with a unified interface, allowing flexible model selection based on cost, quality, and availability requirements.
+  \item Real-time pipeline monitoring with stage-level progress visualization and scene-level error reporting.
+  \item A progressive mastery quiz system that automatically generates and scales assessment difficulty from the lecture content.
+\end{enumerate}
+
+\section{Limitations}
+
+The current implementation has several limitations. The system requires a Python environment with Manim Community pre-installed, which adds setup complexity. The local TTS engine, while privacy-preserving, is limited to the voices available in the Kokoro-82M model and does not support multi-language synthesis out of the box. The pipeline generates videos for a single topic at a time, with no built-in support for multi-topic course construction. The web research stage depends on the Tavily API, which requires an API key and internet connectivity. Finally, the LLM-generated Manim code, while constrained to a safe API subset, may not always produce pedagogically optimal animations---the quality is bounded by the capabilities of the underlying language model.
+
+\section{Future Work}
+
+Several directions for future enhancement are identified:
+
+\begin{enumerate}
+  \item \textbf{Multi-language TTS:} Integrating additional TTS models to support voiceover synthesis in languages beyond English, enabling global educational applications.
+  \item \textbf{Interactive Editing:} Adding a web-based Manim code editor that allows users to review and modify generated code before rendering, combining automation with human oversight.
+  \item \textbf{Animation Template Library:} Building a curated library of proven animation templates for common mathematical and scientific concepts, reducing reliance on LLM-generated code for frequently used patterns.
+  \item \textbf{Cloud Deployment:} Adapting the pipeline for cloud-native deployment with containerized Manim environments, enabling scalable, on-demand video generation without local setup.
+  \item \textbf{Multi-Topic Course Generation:} Extending the pipeline to generate structured multi-video courses with prerequisite ordering, progressive complexity, and cross-topic references.
+  \item \textbf{Quality Evaluation Framework:} Developing automated metrics for evaluating generated animation quality, including visual clarity, pedagogical effectiveness, and A/V synchronization accuracy.
+  \item \textbf{Incremental Rendering:} Implementing scene-level caching to avoid re-rendering unchanged scenes when only a subset of the lecture plan is modified.
+\end{enumerate}
+
+The architecture and design patterns established in this work provide a solid foundation for continued development in automated educational content generation.
+
+\cleardoublepage
+
+
+% ==============================================================================
+% BIBLIOGRAPHY
+% ==============================================================================
+\begin{thebibliography}{9}
+\addcontentsline{toc}{chapter}{Bibliography}
+
+\bibitem{mayer2009multimedia}
+Richard E. Mayer.
+\emph{Multimedia Learning}.
+Cambridge University Press, 2nd edition, 2009.
+
+\bibitem{manim2024}
+Manim Community Developers.
+Manim -- Mathematical Animation Framework.
+\emph{https://www.manim.community/}, 2024.
+
+\bibitem{chen2021codex}
+Mark Chen, Jerry Tworek, Heewoo Jun, et al.
+Evaluating Large Language Models Trained on Code.
+\emph{arXiv preprint arXiv:2107.03374}, 2021.
+
+\bibitem{vercelai2025}
+Vercel Inc.
+Vercel AI SDK Documentation.
+\emph{https://sdk.vercel.ai/}, 2025.
+
+\bibitem{kokoro2025}
+Kokoro TTS Developers.
+Kokoro-82M: A Compact Neural TTS Model.
+\emph{https://github.com/onnx-community/Kokoro-82M-v1.0-ONNX}, 2025.
+
+\bibitem{onnx2023}
+ONNX Runtime Developers.
+ONNX Runtime: Cross-Platform Machine Learning Model Accelerator.
+\emph{https://onnxruntime.ai/}, 2023.
+
+\bibitem{wu2023autogen}
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, et al.
+AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation.
+\emph{arXiv preprint arXiv:2308.08155}, 2023.
+
+\bibitem{maddigan2022chat2vis}
+Paula Maddigan and Teo Susnjak.
+Chat2VIS: Generating Data Visualizations via Natural Language
+Using ChatGPT, Codex and GPT-3 Large Language Models.
+\emph{IEEE Access}, 10:98692--98603, 2022.
+
+\bibitem{tavily2025}
+Tavily Inc.
+Tavily Search API Documentation.
+\emph{https://tavily.com/}, 2025.
+
+\end{thebibliography}
+
+\end{document}

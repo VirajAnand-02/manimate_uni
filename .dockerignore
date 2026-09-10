@@ -7,3 +7,8 @@ generations
 manim-env
 tsconfig.tsbuildinfo
 npm-debug.log*
+
+# Report/archive artifacts — not part of the build context
+manimate-uni.zip
+*.tex
+docs
