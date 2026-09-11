@@ -2,7 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Download, Monitor, CheckCircle2, Loader2, Sparkles, ChevronRight, ChevronDown, FileVideo, Video, Brain, AlertTriangle, XCircle, Clock, Search, BookOpen, Code2, Film, Mic, Scissors, SkipForward } from 'lucide-react';
+import {
+  AlertTriangle, BookOpen, Brain, CheckCircle2, ChevronDown, Code2, Download, Film,
+  Loader2, Mic, Scissors, Search, SkipForward, Trash2, XCircle,
+} from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import { useRouter } from 'next/navigation';
@@ -21,30 +24,29 @@ interface PlanScene {
 }
 
 interface StageDetail {
-  // web_research
   found?: boolean;
   chars?: number;
-  // lecture_planning
   modules?: number;
   scenes?: number;
   total_minutes?: number;
   module_titles?: string[];
   plan_scenes?: PlanScene[];
-  // code_generation
   scenes_generated?: number;
+  modules_generated?: number;
+  modules_total?: number;
   pct?: number;
-  // rendering
   total?: number;
+  settled?: number;
   rendered?: number;
   failed?: number;
   corrections?: number;
   failed_scenes?: { module_index: number; scene_id: string; error: string }[];
-  // voiceover
   ok?: number;
   skipped?: number;
-  // stitching
   modules_stitched?: number;
+  size_mb?: number;
   final_video?: string;
+  log?: string[];
 }
 
 interface LocalStageProgress {
@@ -74,14 +76,14 @@ interface StudioJob {
   stages: Record<string, LocalStageProgress>;
 }
 
-const STAGE_ICONS: Record<string, React.ElementType> = {
-  web_research: Search,
-  lecture_planning: BookOpen,
-  code_generation: Code2,
-  rendering: Film,
-  voiceover: Mic,
-  stitching: Scissors,
-};
+const STAGES = [
+  { id: 'web_research', name: 'Research', icon: Search },
+  { id: 'lecture_planning', name: 'Lecture plan', icon: BookOpen },
+  { id: 'code_generation', name: 'Scene code', icon: Code2 },
+  { id: 'rendering', name: 'Rendering', icon: Film },
+  { id: 'voiceover', name: 'Narration', icon: Mic },
+  { id: 'stitching', name: 'Assembly', icon: Scissors },
+] as const;
 
 function formatElapsed(seconds: number | null | undefined): string {
   if (seconds == null) return '—';
@@ -91,6 +93,190 @@ function formatElapsed(seconds: number | null | undefined): string {
   return `${mins}m ${secs}s`;
 }
 
+/** One-line summary of a stage's detail payload. */
+function stageSummary(stageId: string, d?: StageDetail): string | null {
+  if (!d) return null;
+  switch (stageId) {
+    case 'web_research':
+      return d.chars != null ? `${d.chars.toLocaleString()} characters of context` : null;
+    case 'lecture_planning':
+      return d.modules != null ? `${d.modules} modules · ${d.scenes} scenes · ~${d.total_minutes} min` : null;
+    case 'code_generation':
+      if (d.scenes_generated != null) return `${d.scenes_generated} scenes written`;
+      if (d.modules_generated != null) return `${d.modules_generated}/${d.modules_total} modules`;
+      return null;
+    case 'rendering': {
+      if (d.total == null) return null;
+      const parts = [`${d.rendered ?? d.settled ?? 0}/${d.total} scenes`];
+      if (d.failed) parts.push(`${d.failed} failed`);
+      if (d.corrections) parts.push(`${d.corrections} corrections`);
+      return parts.join(' · ');
+    }
+    case 'voiceover': {
+      if (d.total == null) return null;
+      const parts = [`${d.ok ?? 0}/${d.total} voiced`];
+      if (d.skipped) parts.push(`${d.skipped} silent`);
+      if (d.failed) parts.push(`${d.failed} failed`);
+      return parts.join(' · ');
+    }
+    case 'stitching':
+      if (d.size_mb) return `${d.size_mb} MB final cut`;
+      if (d.modules_stitched) return `${d.modules_stitched} modules joined`;
+      return null;
+    default:
+      return null;
+  }
+}
+
+function StageRow({
+  stage, data, index,
+}: {
+  stage: (typeof STAGES)[number];
+  data: LocalStageProgress;
+  index: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const status = data?.status ?? 'pending';
+  const done = status === 'done';
+  const failed = status === 'failed';
+  const skipped = status === 'skipped';
+  const running = status === 'running';
+  const summary = stageSummary(stage.id, data?.detail);
+  const hasLog = Boolean(data?.detail?.log?.length || data?.detail?.failed_scenes?.length);
+
+  const tone = failed
+    ? 'text-alert-400 border-alert-500/40 bg-alert-500/10'
+    : done
+      ? 'text-signal-400 border-signal-500/40 bg-signal-500/10'
+      : running
+        ? 'text-amber-400 border-amber-400/40 bg-amber-400/10'
+        : skipped
+          ? 'text-chalk-500 border-ink-700 bg-ink-800'
+          : 'text-chalk-500 border-ink-700 bg-ink-900';
+
+  return (
+    <motion.li
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.4, delay: index * 0.05 }}
+      className="relative pl-11"
+    >
+      {/* Rail */}
+      {index < STAGES.length - 1 && (
+        <span
+          className={`absolute left-[15px] top-9 h-[calc(100%-10px)] w-px ${
+            done ? 'bg-signal-500/30' : 'bg-ink-700'
+          }`}
+        />
+      )}
+
+      <span className={`absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border ${tone}`}>
+        {failed ? <XCircle className="h-4 w-4" />
+          : done ? <CheckCircle2 className="h-4 w-4" />
+          : skipped ? <SkipForward className="h-3.5 w-3.5" />
+          : running ? <Loader2 className="h-4 w-4 animate-spin" />
+          : <stage.icon className="h-3.5 w-3.5" />}
+      </span>
+
+      <div className="pb-6">
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h4 className={`font-sans text-sm font-semibold ${done || running || failed ? 'text-chalk-100' : 'text-chalk-400'}`}>
+            {stage.name}
+          </h4>
+          {data?.elapsed_seconds != null && (
+            <span className="numeric text-[11px] text-chalk-500">{formatElapsed(data.elapsed_seconds)}</span>
+          )}
+          {hasLog && (
+            <button
+              onClick={() => setOpen(!open)}
+              className="ml-auto inline-flex items-center gap-1 text-[11px] text-chalk-500 transition-colors hover:text-chalk-200"
+            >
+              {open ? 'Hide' : 'Details'}
+              <ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+          )}
+        </div>
+
+        <p className="mt-0.5 text-[13px] leading-relaxed text-chalk-400">{data?.message}</p>
+        {summary && <p className="numeric mt-1 text-[11px] text-chalk-500">{summary}</p>}
+
+        {running && (
+          <div className="mt-2 h-[3px] w-full max-w-xs overflow-hidden rounded-full bg-ink-800">
+            <motion.div
+              className="h-full rounded-full bg-amber-400"
+              initial={{ width: 0 }}
+              animate={{ width: `${data.pct || 0}%` }}
+              transition={{ duration: 0.6, ease: 'easeOut' }}
+            />
+          </div>
+        )}
+
+        <AnimatePresence initial={false}>
+          {open && hasLog && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="custom-scrollbar mt-3 max-h-56 overflow-y-auto rounded-lg border border-ink-700 bg-ink-950/70 p-3">
+                {data.detail?.failed_scenes?.map((f, i) => (
+                  <p key={`f${i}`} className="mb-2 font-mono text-[11px] leading-relaxed text-alert-300">
+                    module_{f.module_index}/{f.scene_id}: {f.error.slice(0, 300)}
+                  </p>
+                ))}
+                {data.detail?.log?.map((line, i) => (
+                  <p key={`l${i}`} className="font-mono text-[11px] leading-relaxed text-chalk-400">
+                    {line}
+                  </p>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.li>
+  );
+}
+
+/** Stand-in for the player while the video does not exist yet. */
+function RenderStage({ progress, failed }: { progress: number; failed: boolean }) {
+  return (
+    <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950">
+      <div className="absolute inset-0 bg-ruled opacity-60" />
+      {/* A construction being struck, mirroring what Manim is doing off-screen */}
+      <svg viewBox="0 0 480 270" className="absolute inset-0 h-full w-full text-amber-400/20" fill="none" aria-hidden="true">
+        <circle
+          cx="240" cy="135" r="80" stroke="currentColor" strokeWidth="1.25"
+          className="animate-trace" style={{ ['--trace-length' as string]: '520' }}
+        />
+        <path
+          d="M 240 55 L 309 175 L 171 175 Z" stroke="currentColor" strokeWidth="1.25"
+          className="animate-trace" style={{ ['--trace-length' as string]: '420', animationDelay: '0.5s' }}
+        />
+        <line x1="120" y1="135" x2="360" y2="135" stroke="currentColor" strokeWidth="0.75" opacity="0.5" />
+        <line x1="240" y1="35" x2="240" y2="235" stroke="currentColor" strokeWidth="0.75" opacity="0.5" />
+        <circle cx="240" cy="135" r="3" fill="currentColor" />
+      </svg>
+
+      <div className="relative z-10 text-center">
+        {failed ? (
+          <>
+            <AlertTriangle className="mx-auto h-7 w-7 text-alert-400" />
+            <p className="mt-3 text-sm text-chalk-300">Render did not complete</p>
+          </>
+        ) : (
+          <>
+            <div className="numeric font-display text-[52px] leading-none text-chalk-100">{progress}%</div>
+            <p className="mt-2 text-[13px] text-chalk-400">Drawing your lecture…</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Studio({ jobId }: StudioProps) {
   const router = useRouter();
   const [jobData, setJobData] = useState<StudioJob | null>(null);
@@ -98,7 +284,6 @@ export default function Studio({ jobId }: StudioProps) {
   const [loading, setLoading] = useState(() => jobId !== undefined && jobId !== 'default');
   const [cancelling, setCancelling] = useState(false);
   const [discarding, setDiscarding] = useState(false);
-  const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!jobId || jobId === 'default') {
@@ -132,7 +317,7 @@ export default function Studio({ jobId }: StudioProps) {
           return redirectToLogin();
         }
         if (!res.ok) {
-          setError("Generation job details not found.");
+          setError('Generation job details not found.');
           setLoading(false);
           return;
         }
@@ -154,8 +339,8 @@ export default function Studio({ jobId }: StudioProps) {
           delay = MIN_DELAY;
         }
       } catch (err) {
-        console.error("Fetch job error:", err);
-        setError("Error communicating with pipeline server.");
+        console.error('Fetch job error:', err);
+        setError('Error communicating with pipeline server.');
         setLoading(false);
         delay = Math.min(MAX_DELAY, Math.round(delay * 1.5));
       } finally {
@@ -187,558 +372,200 @@ export default function Studio({ jobId }: StudioProps) {
 
   const handleDiscard = useCallback(async () => {
     if (!jobId || discarding) return;
-    const confirm = window.confirm(
-      "Are you sure you want to discard this build? This will permanently delete the video and all related data and files."
+    const confirmed = window.confirm(
+      'Discard this lecture? This permanently deletes the video and all related data.',
     );
-    if (!confirm) return;
+    if (!confirmed) return;
 
     setDiscarding(true);
     try {
       const res = await fetch(`/api/generate/${jobId}?discard=true`, { method: 'DELETE' });
       if (res.ok || res.status === 204) {
-        router.push('/');
+        router.push('/library');
       } else {
-        alert("Failed to discard the build.");
+        alert('Failed to discard the lecture.');
       }
     } catch (err) {
       console.error('Discard error:', err);
-      alert("Error occurred while discarding the build.");
+      alert('Error occurred while discarding.');
     } finally {
       setDiscarding(false);
     }
   }, [jobId, discarding, router]);
 
-
-  const displayTitle = jobData?.topic || (jobId && jobId !== 'default'
-    ? jobId
-        .split('-')
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ')
-    : "Neural Video Construct");
-
   const defaultStages: Record<string, LocalStageProgress> = {
-    web_research: { status: 'pending', message: 'Queueing Tavily factual research...', pct: 0 },
-    lecture_planning: { status: 'pending', message: 'Waiting to plan course syllabus...', pct: 0 },
-    code_generation: { status: 'pending', message: 'Waiting for scene code generator...', pct: 0 },
-    rendering: { status: 'pending', message: 'Waiting for manim render engine...', pct: 0 },
-    voiceover: { status: 'pending', message: 'Waiting for TTS audio compiler...', pct: 0 },
-    stitching: { status: 'pending', message: 'Waiting for ffmpeg video stitcher...', pct: 0 }
+    web_research: { status: 'pending', message: 'Waiting for factual research…', pct: 0 },
+    lecture_planning: { status: 'pending', message: 'Waiting to plan the lecture…', pct: 0 },
+    code_generation: { status: 'pending', message: 'Waiting for the scene writer…', pct: 0 },
+    rendering: { status: 'pending', message: 'Waiting for the Manim renderer…', pct: 0 },
+    voiceover: { status: 'pending', message: 'Waiting for narration…', pct: 0 },
+    stitching: { status: 'pending', message: 'Waiting for final assembly…', pct: 0 },
   };
 
-  const currentStages = jobData?.stages || defaultStages;
-
-  const stepsList = [
-    { id: 'web_research', name: 'Web Fact Research', ...currentStages.web_research },
-    { id: 'lecture_planning', name: 'Lecture Course Planning', ...currentStages.lecture_planning },
-    { id: 'code_generation', name: 'Manim Script Coding', ...currentStages.code_generation },
-    { id: 'rendering', name: 'Mathematical Rendering', ...currentStages.rendering },
-    { id: 'voiceover', name: 'Voice Narration Compile', ...currentStages.voiceover },
-    { id: 'stitching', name: 'Timeline Assembly', ...currentStages.stitching }
-  ];
-
-  const overallProgress = jobData?.overall_progress || 0;
+  const stages = jobData?.stages || defaultStages;
   const status = jobData?.status || 'pending';
+  const progress = jobData?.overall_progress || 0;
   const activeStageKey = jobData?.current_stage || 'web_research';
-  const activeStage = currentStages[activeStageKey] || { message: 'Initializing...', pct: 0 };
   const isRunning = status === 'running' || status === 'pending' || status === 'queued';
+  const isCompleted = status === 'completed';
+  const isFailed = status === 'failed';
 
-  /** Render rich detail info for a stage */
-  function renderStageDetail(stageId: string, detail?: StageDetail) {
-    if (!detail || Object.keys(detail).length === 0) return null;
+  if (loading) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4">
+        <Loader2 className="h-6 w-6 animate-spin text-amber-400" />
+        <p className="text-sm text-chalk-400">Loading lecture…</p>
+      </div>
+    );
+  }
 
-    switch (stageId) {
-      case 'web_research':
-        if (detail.chars != null) {
-          return (
-            <div className="flex items-center gap-2 mt-1.5">
-              <div className="text-[8px] font-mono text-zinc-600">
-                {detail.found ? `📄 ${detail.chars.toLocaleString()} chars collected` : '⏳ Searching...'}
-              </div>
-            </div>
-          );
-        }
-        return null;
-
-      case 'lecture_planning':
-        if (detail.modules != null) {
-          return (
-            <div className="mt-1.5 space-y-1">
-              <div className="text-[8px] font-mono text-zinc-600">
-                📐 {detail.modules} modules · {detail.scenes} scenes · ~{detail.total_minutes}min
-              </div>
-              {detail.module_titles && detail.module_titles.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {detail.module_titles.map((title, i) => (
-                    <span key={i} className="text-[7px] font-mono px-1.5 py-0.5 rounded bg-white/[0.03] border border-white/5 text-zinc-500">
-                      {title}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        }
-        return null;
-
-      case 'code_generation':
-        if (detail.scenes_generated != null) {
-          return (
-            <div className="text-[8px] font-mono text-zinc-600 mt-1.5">
-              ⚡ {detail.scenes_generated} scenes generated
-            </div>
-          );
-        }
-        return null;
-
-      case 'rendering':
-        if (detail.total != null) {
-          return (
-            <div className="mt-1.5 space-y-1">
-              <div className="text-[8px] font-mono text-zinc-600">
-                🎬 {detail.rendered ?? 0}/{detail.total} rendered
-                {(detail.failed ?? 0) > 0 && <span className="text-red-400"> · {detail.failed} failed</span>}
-                {(detail.corrections ?? 0) > 0 && <span className="text-amber-400"> · {detail.corrections} corrections</span>}
-              </div>
-              {detail.failed_scenes && detail.failed_scenes.length > 0 && (
-                <div className="space-y-0.5">
-                  {detail.failed_scenes.map((fs, i) => (
-                    <div key={i} className="text-[7px] font-mono text-red-400/70 pl-2 border-l border-red-500/20 truncate max-w-[200px]">
-                      {fs.scene_id}: {fs.error}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        }
-        return null;
-
-      case 'voiceover':
-        if (detail.total != null) {
-          return (
-            <div className="text-[8px] font-mono text-zinc-600 mt-1.5">
-              🎙️ {detail.ok ?? 0}/{detail.total} synthesized
-              {(detail.failed ?? 0) > 0 && <span className="text-red-400"> · {detail.failed} failed</span>}
-              {(detail.skipped ?? 0) > 0 && <span className="text-zinc-500"> · {detail.skipped} skipped</span>}
-            </div>
-          );
-        }
-        return null;
-
-      case 'stitching':
-        if (detail.modules_stitched != null) {
-          return (
-            <div className="text-[8px] font-mono text-zinc-600 mt-1.5">
-              🎞️ {detail.modules_stitched} modules stitched
-            </div>
-          );
-        }
-        return null;
-
-      default:
-        return null;
-    }
+  if (error) {
+    return (
+      <Card className="px-8 py-16 text-center">
+        <AlertTriangle className="mx-auto h-7 w-7 text-alert-400" />
+        <h3 className="mt-4 font-display text-2xl text-chalk-100">Something went wrong</h3>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-chalk-400">{error}</p>
+        <div className="mt-6 flex justify-center">
+          <Button variant="outline" onClick={() => router.push('/library')}>Back to library</Button>
+        </div>
+      </Card>
+    );
   }
 
   return (
-    <div className="space-y-10 pb-16">
-       <div className="flex flex-col md:flex-row items-center justify-between gap-6 pb-6 border-b border-white/5 relative">
-          <div className="absolute inset-0 bg-blocks opacity-[0.05] pointer-events-none" />
-          <div className="relative z-10">
-             <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-brand-500/10 border border-brand-500/30 flex items-center justify-center">
-                   <Monitor className="w-4 h-4 text-brand-400" />
-                </div>
-                <h2 className="text-2xl font-display font-black text-white uppercase tracking-tighter">Neural Studio</h2>
-             </div>
-             <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-[0.2em] max-w-xl">
-                Synthesizing architectural knowledge into high-fidelity visual streams.
-             </p>
+    <div className="space-y-6 pb-8">
+      {/* ─── Header ───────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45 }}
+        className="flex flex-wrap items-start justify-between gap-4 border-b border-ink-800 pb-5"
+      >
+        <div className="min-w-0">
+          <h1 className="font-display text-[30px] leading-tight text-chalk-100 md:text-[36px]">
+            {jobData?.topic || 'Lecture'}
+          </h1>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px]">
+            {isCompleted && (
+              <span className="inline-flex items-center gap-1.5 text-signal-300">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Ready
+              </span>
+            )}
+            {isFailed && (
+              <span className="inline-flex items-center gap-1.5 text-alert-300">
+                <XCircle className="h-3.5 w-3.5" /> Failed
+              </span>
+            )}
+            {isRunning && (
+              <span className="inline-flex items-center gap-1.5 capitalize text-amber-300">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {String(activeStageKey).replace(/_/g, ' ')}
+              </span>
+            )}
+            <span className="numeric text-chalk-500">
+              {formatElapsed(jobData?.elapsed_seconds)} elapsed
+            </span>
           </div>
-          <div className="flex items-center gap-3 relative z-10">
-             {isRunning && (
-               <Button
-                 variant="outline"
-                 size="sm"
-                 className="border-red-500/20 text-red-400 hover:bg-red-500/10 uppercase font-black tracking-widest text-[10px] px-6 py-3"
-                 onClick={handleCancel}
-                 disabled={cancelling}
-               >
-                 <XCircle className="w-3.5 h-3.5 mr-1.5" />
-                 {cancelling ? 'Cancelling...' : 'Cancel Job'}
-               </Button>
-             )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-white/5 text-zinc-500 uppercase font-black tracking-widest text-[10px] px-6 py-3"
-                onClick={handleDiscard}
-                disabled={discarding}
-              >
-                {discarding ? 'Discarding...' : 'Discard Build'}
-              </Button>
-              <Button variant="primary" size="sm" icon={CheckCircle2} className="px-6 py-3 text-[10px] font-black uppercase tracking-widest" onClick={() => router.push('/library')} disabled={status !== 'completed'}>Finalize Stream</Button>
-          </div>
-       </div>
+        </div>
 
-       <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-          {/* Main Monitor Area */}
-          <div className="lg:col-span-2 space-y-8">
-             <Card variant="solid" className="p-0 overflow-hidden border-white/10 shadow-[0_40px_100px_-20px_rgba(0,0,0,1)] bg-black" glow="none">
-                <div className="aspect-video relative group flex items-center justify-center bg-zinc-950">
-                   <div className="absolute inset-0 bg-grid opacity-[0.1]" />
-                   
-                   {loading ? (
-                      <div className="text-center space-y-4 relative z-10">
-                         <Loader2 className="w-12 h-12 text-brand-500 animate-spin mx-auto" />
-                         <p className="font-mono text-xs text-zinc-500 tracking-wider">LOADING ARCHITECT...</p>
-                      </div>
-                   ) : error ? (
-                      <div className="text-center space-y-4 p-8 relative z-10">
-                         <AlertTriangle className="w-12 h-12 text-red-500 mx-auto" />
-                         <h4 className="font-display font-black text-white text-lg uppercase tracking-tight">PIPELINE ERROR</h4>
-                         <p className="font-mono text-xs text-zinc-500 max-w-md mx-auto">{error}</p>
-                         <Button size="sm" variant="outline" className="mt-4 border-white/10" onClick={() => router.push('/')}>Return Home</Button>
-                      </div>
-                   ) : status === 'failed' ? (
-                      <div className="text-center space-y-4 p-8 relative z-10">
-                         <AlertTriangle className="w-12 h-12 text-red-500 mx-auto" />
-                         <h4 className="font-display font-black text-white text-lg uppercase tracking-tight">CONSTRUCT FAILED</h4>
-                         <p className="font-mono text-xs text-zinc-500 max-w-md mx-auto">{jobData?.error || 'Unknown rendering error occurred.'}</p>
-                         <Button size="sm" variant="outline" className="mt-4 border-white/10" onClick={() => router.push('/')}>Return to Center</Button>
-                      </div>
-                   ) : status === 'completed' ? (
-                      <video 
-                        src={`/api/generate/${jobId}/video`}
-                        controls 
-                        autoPlay
-                        className="w-full h-full object-contain relative z-10"
-                      />
-                   ) : (
-                      // Running or Pending State Hud
-                      <div className="text-center space-y-6 relative z-10 w-full p-8 max-w-lg">
-                         <Loader2 className="w-14 h-14 text-brand-500 animate-spin mx-auto mb-2" />
-                         <div className="space-y-2">
-                            <div className="flex justify-between items-center text-[10px] font-mono text-brand-400 font-bold uppercase tracking-wider px-1">
-                               <span>Synthesizing Construct...</span>
-                               <span>{overallProgress}%</span>
-                            </div>
-                            <div className="h-2 w-full bg-zinc-900 rounded-full overflow-hidden border border-white/5">
-                               <motion.div 
-                                 initial={{ width: 0 }}
-                                 animate={{ width: `${overallProgress}%` }}
-                                 className="h-full bg-gradient-to-r from-brand-500 to-indigo-500 shadow-[0_0_15px_rgba(12,142,233,0.5)]"
-                               />
-                            </div>
-                         </div>
-                         <div className="bg-black/40 border border-white/5 rounded-xl p-4 font-mono text-xs text-zinc-400 text-left min-h-[70px] backdrop-blur-md">
-                            <div className="text-brand-500 text-[9px] uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5">
-                               <span className="w-1.5 h-1.5 bg-brand-500 rounded-full animate-ping" />
-                               Stage: {activeStageKey.toUpperCase()}
-                            </div>
-                            <p className="leading-relaxed line-clamp-2">{activeStage.message}</p>
-                         </div>
-                         {/* Elapsed time display */}
-                         {jobData?.elapsed_seconds != null && (
-                           <div className="flex items-center justify-center gap-1.5 text-[9px] font-mono text-zinc-600">
-                             <Clock className="w-3 h-3" />
-                             <span>Elapsed: {formatElapsed(jobData.elapsed_seconds)}</span>
-                           </div>
-                         )}
-                      </div>
-                   )}
+        <div className="flex shrink-0 items-center gap-2">
+          {isRunning && (
+            <Button size="sm" variant="danger" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? 'Cancelling…' : 'Cancel'}
+            </Button>
+          )}
+          {isCompleted && (
+            <a href={`/api/generate/${jobId}/video?download=1`}>
+              <Button size="sm" variant="secondary" icon={Download}>Download</Button>
+            </a>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={Trash2}
+            onClick={handleDiscard}
+            disabled={discarding}
+            title="Discard this lecture"
+          >
+            {discarding ? 'Discarding…' : ''}
+          </Button>
+        </div>
+      </motion.div>
 
-                   {/* HUD Elements */}
-                   <div className="absolute top-6 left-6 flex items-center gap-3 text-white/40 z-20">
-                      <div className="px-2.5 py-1.5 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-[8px] font-mono font-bold uppercase tracking-[0.2em]">
-                        720P_NEURAL_STREAM
-                      </div>
-                      <div className="px-2.5 py-1.5 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-[8px] font-mono font-bold uppercase tracking-[0.2em] flex items-center gap-1.5">
-                         <div className={`w-1.5 h-1.5 rounded-full ${status === 'completed' ? 'bg-emerald-500' : status === 'failed' ? 'bg-red-500' : 'bg-brand-500 animate-pulse'}`} />
-                         {status.toUpperCase()}
-                      </div>
-                   </div>
-                </div>
-                
-                <div className="p-8 border-t border-white/5 flex items-center justify-between bg-zinc-950/50">
-                   <div className="space-y-2 max-w-xl">
-                      <div className="flex items-center gap-2">
-                         <span className="text-[8px] font-bold text-brand-500 uppercase tracking-[0.3em]">Job Construct Node</span>
-                         <h3 className="text-xl font-display font-black text-white uppercase tracking-tighter">{displayTitle}</h3>
-                      </div>
-                      <p className="text-zinc-500 text-[13px] leading-relaxed font-medium">
-                         Exploring the dynamic synthesis of mathematical representation. Structured, compiled and stitched automatically.
-                      </p>
-                   </div>
-                   <div className="flex items-center gap-2">
-                      {status === 'completed' && (
-                         <a 
-                           href={`/api/generate/${jobId}/video?download=1`} 
-                           download={`manimate_${jobId?.slice(0, 8)}.mp4`}
-                           className="p-3.5 rounded-xl bg-zinc-900 border border-white/5 text-zinc-400 hover:text-white transition-all flex items-center gap-2 text-xs font-bold uppercase tracking-wider"
-                         >
-                            <Download className="w-4 h-4" />
-                            Download
-                         </a>
-                      )}
-                   </div>
-                </div>
-             </Card>
+      {/* Overall progress */}
+      {isRunning && (
+        <div className="h-[3px] w-full overflow-hidden rounded-full bg-ink-800">
+          <motion.div
+            className="h-full rounded-full bg-gradient-to-r from-amber-500 to-amber-300"
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
+          />
+        </div>
+      )}
 
-             <div className="grid grid-cols-1 gap-6">
-                <Card variant="solid" className="p-8 border-white/5 hover:border-brand-500/20 transition-all bg-[#09090b] shadow-xl">
-                   <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/5">
-                      <div className="flex items-center gap-3">
-                         <div className="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center">
-                            <FileVideo className="w-5 h-5 text-indigo-400" />
-                          </div>
-                          <h4 className="text-[11px] font-black text-white uppercase tracking-[0.3em]">Neural Script Construct</h4>
-                      </div>
-                      <div className="flex items-center gap-2">
-                         {currentStages.lecture_planning?.status === 'running' ? (
-                           <Loader2 className="w-3 h-3 text-brand-500 animate-spin" />
-                         ) : (
-                           <div className={`w-1.5 h-1.5 rounded-full ${currentStages.lecture_planning?.status === 'done' || status === 'completed' ? 'bg-emerald-500' : 'bg-zinc-600'}`} />
-                         )}
-                         <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">
-                            {currentStages.lecture_planning?.status === 'running'
-                              ? 'Generating...'
-                              : currentStages.lecture_planning?.status === 'done' || status === 'completed'
-                                ? 'Lattice Stabilized'
-                                : 'Awaiting...'}
-                         </span>
-                      </div>
-                   </div>
-                   
-                   <div className="space-y-3">
-                      {/* Loading skeleton while lecture plan is generating */}
-                      {(!currentStages.lecture_planning?.detail?.module_titles || currentStages.lecture_planning.detail.module_titles.length === 0) ? (
-                        <div className="space-y-3 font-mono text-[11px]">
-                          {currentStages.lecture_planning?.status === 'running' ? (
-                            /* Animated loading skeleton */
-                            [1, 2, 3].map((i) => (
-                              <div key={i} className="p-4 rounded-lg bg-white/[0.02] border border-white/5 animate-pulse">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-6 h-4 rounded bg-brand-500/20" />
-                                  <div className="flex-1">
-                                    <div className="h-3 rounded bg-white/[0.06]" style={{ width: `${50 + i * 15}%` }} />
-                                  </div>
-                                  <div className="w-3 h-3 rounded bg-white/[0.04]" />
-                                </div>
-                                <div className="mt-3 space-y-2">
-                                  <div className="h-2 rounded bg-white/[0.03]" style={{ width: `${70 + i * 8}%` }} />
-                                  <div className="h-2 rounded bg-white/[0.03]" style={{ width: `${40 + i * 12}%` }} />
-                                </div>
-                              </div>
-                            ))
-                          ) : (
-                            /* Idle placeholder before generation starts */
-                            <div className="flex items-center justify-center py-8 text-zinc-600">
-                              <div className="text-center space-y-2">
-                                <BookOpen className="w-8 h-8 mx-auto text-zinc-700" />
-                                <p className="text-[10px] font-mono uppercase tracking-widest">Script construct will appear here</p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        /* Module accordion list */
-                        <div className="space-y-2 font-mono text-[11px] leading-relaxed">
-                          {currentStages.lecture_planning.detail.module_titles.map((title: string, i: number) => {
-                            const isExpanded = expandedModules.has(i);
-                            const moduleScenes = (currentStages.lecture_planning?.detail as StageDetail)?.plan_scenes?.filter(
-                              (s: PlanScene) => s.module_index === i + 1
-                            ) || [];
+      {isFailed && jobData?.error && (
+        <Card variant="quiet" className="border-alert-500/30 bg-alert-500/[0.06] p-4">
+          <p className="font-mono text-[12px] leading-relaxed text-alert-300">{jobData.error}</p>
+        </Card>
+      )}
 
-                            return (
-                              <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] overflow-hidden transition-all hover:border-white/10">
-                                <button
-                                  onClick={() => {
-                                    setExpandedModules(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(i)) next.delete(i);
-                                      else next.add(i);
-                                      return next;
-                                    });
-                                  }}
-                                  className="w-full flex items-center gap-3 p-3.5 text-left cursor-pointer group"
-                                >
-                                  <span className="text-brand-500 font-black text-xs flex-shrink-0">{String(i + 1).padStart(2, '0')}</span>
-                                  <span className="flex-1 text-zinc-300 group-hover:text-white transition-colors">{title}</span>
-                                  <div className="flex items-center gap-2 flex-shrink-0">
-                                    {moduleScenes.length > 0 && (
-                                      <span className="text-[8px] text-zinc-600 font-bold px-1.5 py-0.5 rounded bg-white/[0.03]">
-                                        {moduleScenes.length} {moduleScenes.length === 1 ? 'scene' : 'scenes'}
-                                      </span>
-                                    )}
-                                    <motion.div
-                                      animate={{ rotate: isExpanded ? 180 : 0 }}
-                                      transition={{ duration: 0.2 }}
-                                    >
-                                      <ChevronDown className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
-                                    </motion.div>
-                                  </div>
-                                </button>
+      <div className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+        {/* ─── Player ─────────────────────────────────────────── */}
+        <div className="space-y-4">
+          {isCompleted ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.99 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden rounded-[var(--radius-card)] border border-ink-700 bg-ink-950"
+            >
+              <video
+                src={`/api/generate/${jobId}/video`}
+                controls
+                playsInline
+                className="aspect-video w-full bg-black"
+              />
+            </motion.div>
+          ) : (
+            <RenderStage progress={progress} failed={isFailed} />
+          )}
 
-                                <AnimatePresence initial={false}>
-                                  {isExpanded && moduleScenes.length > 0 && (
-                                    <motion.div
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: 'auto', opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                      transition={{ duration: 0.25, ease: 'easeInOut' }}
-                                      className="overflow-hidden"
-                                    >
-                                      <div className="px-3.5 pb-3.5 pt-1 space-y-1.5 border-t border-white/5">
-                                        {moduleScenes.map((scene: PlanScene, j: number) => (
-                                          <div key={scene.scene_id} className="flex items-center gap-2.5 py-2 px-3 rounded-md bg-white/[0.015] hover:bg-white/[0.04] transition-colors">
-                                            <div className="w-5 h-5 rounded flex items-center justify-center bg-indigo-500/10 border border-indigo-500/20 flex-shrink-0">
-                                              <span className="text-[7px] font-black text-indigo-400">{String(j + 1).padStart(2, '0')}</span>
-                                            </div>
-                                            <span className="flex-1 text-zinc-500 text-[10px]">
-                                              {scene.title || scene.scene_id}
-                                            </span>
-                                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                                              {scene.has_voiceover && (
-                                                <Mic className="w-2.5 h-2.5 text-emerald-600" />
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            );
-                          })}
-
-                          {/* Summary bar */}
-                          {currentStages.lecture_planning.detail.modules != null && (
-                            <div className="flex items-center gap-3 pt-2 mt-1 border-t border-white/5 text-[9px] text-zinc-600 font-mono">
-                              <span>📐 {currentStages.lecture_planning.detail.modules} modules</span>
-                              <span className="text-zinc-800">·</span>
-                              <span>{currentStages.lecture_planning.detail.scenes} scenes</span>
-                              <span className="text-zinc-800">·</span>
-                              <span>~{currentStages.lecture_planning.detail.total_minutes} min</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                   </div>
-                </Card>
-             </div>
-          </div>
-
-          {/* Construct Sidebar */}
-          <div className="space-y-8">
-             <Card variant="glass" className="p-6 border-white/5 bg-black/40" glow="none">
-                <div className="flex items-center gap-3 mb-8 pb-4 border-b border-white/5">
-                   <div className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center text-white">
-                      {status === 'completed' ? (
-                         <CheckCircle2 className="w-4 h-4 text-white" />
-                      ) : (
-                         <Loader2 className="w-4 h-4 animate-spin" />
-                      )}
-                   </div>
-                   <div>
-                     <h4 className="text-[11px] font-bold text-white uppercase tracking-[0.2em]">Build Pipeline</h4>
-                     {jobData?.elapsed_seconds != null && status !== 'pending' && (
-                       <div className="text-[8px] font-mono text-zinc-600 flex items-center gap-1 mt-0.5">
-                         <Clock className="w-2.5 h-2.5" />
-                         {formatElapsed(jobData.elapsed_seconds)}
-                       </div>
-                     )}
-                   </div>
-                </div>
-                
-                <div className="space-y-8">
-                   {stepsList.map((step, idx) => {
-                      const isStepDone = step.status === 'done' || (status === 'completed' && step.status !== 'skipped');
-                      const isStepActive = step.status === 'running' && status !== 'completed';
-                      const isStepFailed = step.status === 'failed';
-                      const isStepSkipped = step.status === 'skipped';
-                      const StageIcon = STAGE_ICONS[step.id] || Play;
-
-                      return (
-                         <div key={idx} className="relative pl-8">
-                            {idx !== stepsList.length - 1 && (
-                               <div className="absolute left-3 top-8 w-px h-8 bg-white/5" />
-                            )}
-                            <div className={`absolute left-0 top-1 w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-bold border transition-all duration-500 ${
-                               isStepDone 
-                                  ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400' 
-                                  : isStepActive
-                                     ? 'bg-brand-500 border-brand-500 text-white shadow-lg shadow-brand-500/40'
-                                     : isStepFailed
-                                        ? 'bg-red-500/10 border-red-500/50 text-red-500'
-                                        : isStepSkipped
-                                           ? 'bg-zinc-800/50 border-zinc-700/50 text-zinc-600'
-                                           : 'bg-zinc-900 border-white/5 text-zinc-600'
-                            }`}>
-                               {isStepDone ? <CheckCircle2 className="w-3 h-3" /> 
-                                : isStepSkipped ? <SkipForward className="w-3 h-3" /> 
-                                : <StageIcon className="w-3 h-3" />}
-                            </div>
-                            <div className="flex justify-between items-start mb-1 pl-2">
-                               <span className={`text-[9px] font-black uppercase tracking-[0.3em] ${
-                                  isStepDone ? 'text-zinc-500' : isStepActive ? 'text-white' : isStepSkipped ? 'text-zinc-700 line-through' : 'text-zinc-700'
-                               }`}>
-                                  {step.name}
-                                </span>
-                               <span className="text-[9px] font-mono font-bold text-brand-500">{step.pct || 0}%</span>
-                            </div>
-                            <div className="h-1 w-full bg-zinc-900 rounded-full overflow-hidden ml-2 mb-1.5">
-                               <motion.div 
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${step.pct || 0}%` }}
-                                  className={`h-full ${
-                                     isStepDone ? 'bg-zinc-700' : isStepFailed ? 'bg-red-500' : isStepSkipped ? 'bg-zinc-800' : 'bg-brand-500'
-                                  }`}
-                               />
-                            </div>
-                            {step.message && (
-                               <p className="font-mono text-[9px] text-zinc-500 leading-normal pl-2 max-w-xs">{step.message}</p>
-                            )}
-                            {/* Rich stage detail */}
-                            <div className="pl-2">
-                              {renderStageDetail(step.id, step.detail)}
-                            </div>
-                            {/* Stage elapsed time */}
-                            {step.elapsed_seconds != null && step.elapsed_seconds > 0 && (
-                              <div className="pl-2 mt-1 text-[7px] font-mono text-zinc-700 flex items-center gap-1">
-                                <Clock className="w-2 h-2" /> {formatElapsed(step.elapsed_seconds)}
-                              </div>
-                            )}
-                         </div>
-                      );
-                   })}
-                </div>
-
-                <div className="mt-10 space-y-3">
-                   <div className="pt-3 border-t border-white/5">
-                      <Button variant="primary" fullWidth size="lg" className="h-16 text-lg font-black uppercase tracking-[0.2em] shadow-2xl shadow-brand-500/20" icon={Brain} onClick={() => router.push(`/studio/${jobId}/quiz`)} disabled={status !== 'completed'}>
-                         Take Mastery Quiz
-                      </Button>
-                   </div>
-                </div>
-             </Card>
-
-             <Card variant="solid" className="p-6 border-brand-500/10 bg-brand-950/10 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:rotate-12 transition-transform">
-                   <Sparkles className="w-16 h-16 text-brand-500" />
-                </div>
-                <h5 className="text-[9px] font-bold text-brand-500 uppercase tracking-[0.4em] mb-4">Neural Insight</h5>
-                <p className="text-zinc-400 text-[13px] italic leading-relaxed font-medium relative z-10">
-                   {status === 'completed' 
-                      ? "\"Calculations finished. All physical rendering lattices have stabilized successfully.\"" 
-                      : status === 'failed'
-                        ? "\"Pipeline anomaly detected. Neural construct was unable to stabilize the rendering lattice.\""
-                        : "\"Building visual lattices for black holes requires high-density compute. Optimized rendering pipeline active.\""}
+          {isCompleted && (
+            <Card variant="accent" className="flex flex-wrap items-center gap-4 p-4">
+              <Brain className="h-5 w-5 shrink-0 text-amber-400" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-chalk-100">Check what stuck</p>
+                <p className="mt-0.5 text-[13px] text-chalk-400">
+                  Five questions generated from this lecture, with explanations.
                 </p>
-             </Card>
+              </div>
+              <Button size="sm" onClick={() => router.push(`/studio/${jobId}/quiz`)}>
+                Take quiz
+              </Button>
+            </Card>
+          )}
+        </div>
+
+        {/* ─── Pipeline ───────────────────────────────────────── */}
+        <Card className="p-5 md:p-6">
+          <div className="mb-5 flex items-baseline justify-between">
+            <h3 className="font-display text-[22px] text-chalk-100">Pipeline</h3>
+            <span className="numeric text-[13px] text-chalk-400">{progress}%</span>
           </div>
-       </div>
+
+          <ol className="relative">
+            {STAGES.map((stage, i) => (
+              <StageRow
+                key={stage.id}
+                stage={stage}
+                data={stages[stage.id] ?? defaultStages[stage.id]}
+                index={i}
+              />
+            ))}
+          </ol>
+        </Card>
+      </div>
     </div>
   );
 }

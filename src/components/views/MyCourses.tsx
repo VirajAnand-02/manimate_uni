@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, Play, Share2, Rocket, Globe, Cpu, Clock, BarChart3, ChevronRight, Brain, RotateCcw, FileQuestion, Loader2, AlertCircle, FileVideo } from 'lucide-react';
+import {
+  AlertCircle, ArrowRight, CheckCircle2, FileQuestion, Loader2, Play, Plus, Search,
+} from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -19,6 +21,91 @@ interface GenerationJob {
   error?: string | null;
   final_video?: string | null;
   stages: Record<string, { status: string; message: string; pct: number }>;
+}
+
+function relativeTime(iso: string) {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function StatusBadge({ status, progress }: { status: string; progress: number }) {
+  if (status === 'completed') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-signal-500/30 bg-signal-500/10 px-2.5 py-1 text-[11px] font-medium text-signal-300">
+        <CheckCircle2 className="h-3 w-3" />
+        Ready
+      </span>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-alert-500/30 bg-alert-500/10 px-2.5 py-1 text-[11px] font-medium text-alert-300">
+        <AlertCircle className="h-3 w-3" />
+        Failed
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-[11px] font-medium text-amber-300">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      <span className="numeric">{progress || 0}%</span>
+    </span>
+  );
+}
+
+/** Progress rendered as a traced arc — the same visual language as the backdrop. */
+function ProgressRing({ value, state }: { value: number; state: 'done' | 'failed' | 'running' }) {
+  const r = 18;
+  const c = 2 * Math.PI * r;
+  const pct = state === 'done' ? 100 : Math.max(0, Math.min(100, value));
+  const color =
+    state === 'done' ? 'text-signal-400' : state === 'failed' ? 'text-alert-400' : 'text-amber-400';
+
+  return (
+    <div className="relative h-12 w-12 shrink-0">
+      <svg viewBox="0 0 44 44" className="h-full w-full -rotate-90">
+        <circle cx="22" cy="22" r={r} fill="none" stroke="currentColor" strokeWidth="2" className="text-ink-700" />
+        <circle
+          cx="22" cy="22" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c - (pct / 100) * c}
+          className={`${color} transition-[stroke-dashoffset] duration-700 ease-out`}
+        />
+      </svg>
+      <span className={`absolute inset-0 flex items-center justify-center ${color}`}>
+        {state === 'done' ? (
+          <Play className="h-4 w-4 fill-current" />
+        ) : state === 'failed' ? (
+          <AlertCircle className="h-4 w-4" />
+        ) : (
+          <span className="numeric text-[10px] font-medium">{pct}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function EmptyState({
+  icon: Icon, title, body, action,
+}: { icon: typeof Search; title: string; body: string; action?: React.ReactNode }) {
+  return (
+    <Card className="px-8 py-16 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-ink-700 bg-ink-800">
+        <Icon className="h-5 w-5 text-chalk-400" />
+      </div>
+      <h3 className="mt-5 font-display text-2xl text-chalk-100">{title}</h3>
+      <p className="mx-auto mt-2 max-w-sm text-balance text-sm leading-relaxed text-chalk-400">{body}</p>
+      {action && <div className="mt-6 flex justify-center">{action}</div>}
+    </Card>
+  );
 }
 
 export default function MyCourses() {
@@ -46,201 +133,142 @@ export default function MyCourses() {
     fetchGenerations();
   }, []);
 
-  const filteredGenerations = generations.filter((gen) =>
-    gen.topic.toLowerCase().includes(query.toLowerCase())
+  const filtered = generations.filter((gen) =>
+    gen.topic.toLowerCase().includes(query.toLowerCase()),
   );
 
+  const done = generations.filter((g) => g.status === 'completed').length;
+  const running = generations.filter((g) => g.status === 'running' || g.status === 'pending').length;
+
   return (
-    <div className="space-y-12 pb-16">
-      <div className="flex flex-col space-y-2">
-        <h2 className="text-3xl font-display font-black text-white tracking-tighter uppercase">Neural_Library</h2>
-        <div className="flex items-center gap-2">
-           <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
-           <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-[0.3em]">Archives Synchronized_V4</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        <div className="lg:col-span-2 space-y-10">
-          
-          {loading ? (
-            <Card className="flex items-center justify-center p-20 bg-zinc-950/40 border-white/5" variant="solid">
-               <div className="text-center space-y-4">
-                  <Loader2 className="w-8 h-8 text-brand-500 animate-spin mx-auto" />
-                  <p className="font-mono text-xs text-zinc-500 uppercase tracking-widest">Accessing core registers...</p>
-               </div>
-            </Card>
-          ) : generations.length === 0 ? (
-            <Card className="p-12 text-center bg-zinc-950/40 border-white/5 space-y-6" variant="solid">
-               <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto border border-white/10">
-                  <Sparkles className="w-8 h-8 text-zinc-500" />
-               </div>
-               <div className="space-y-2 max-w-sm mx-auto">
-                  <h3 className="text-xl font-display font-black text-white uppercase tracking-tight">No Neural Streams</h3>
-                  <p className="text-xs text-zinc-500 leading-relaxed font-medium">
-                     You have not generated any mathematical lectures yet. Direct your command center to build a masterclass.
-                  </p>
-               </div>
-               <Button variant="primary" size="sm" className="px-6 py-3 text-[10px] font-black uppercase tracking-widest mx-auto" onClick={() => router.push('/')}>
-                  Open Command Center
-               </Button>
-            </Card>
-          ) : filteredGenerations.length === 0 ? (
-            <Card className="p-12 text-center bg-zinc-950/40 border-white/5 space-y-6" variant="solid">
-               <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mx-auto border border-white/10">
-                  <Sparkles className="w-8 h-8 text-zinc-500" />
-               </div>
-               <div className="space-y-2 max-w-sm mx-auto">
-                  <h3 className="text-xl font-display font-black text-white uppercase tracking-tight">No Results Found</h3>
-                  <p className="text-xs text-zinc-500 leading-relaxed font-medium">
-                     No neural streams match the query: &quot;{query}&quot;. Try searching another topic.
-                  </p>
-               </div>
-            </Card>
-          ) : (
-            <div className="space-y-8">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-4 border-b border-white/5 relative">
-                <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-brand-500 to-transparent opacity-30" />
-                <div className="flex items-center gap-4">
-                  <div className="px-3 py-1 bg-brand-500/10 border border-brand-500/30 text-brand-400 text-[8px] font-black uppercase tracking-[0.3em] rounded-md">ACTIVE CORE</div>
-                  <h3 className="text-xl font-display font-black text-white tracking-tighter uppercase">Generated Lattices</h3>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-6">
-                {filteredGenerations.map((gen) => {
-                  const isCompleted = gen.status === 'completed';
-                  const isFailed = gen.status === 'failed';
-                  const isRunning = gen.status === 'running' || gen.status === 'pending';
-
-                  return (
-                    <Card key={gen.jobId} className="group p-0 overflow-hidden flex flex-col md:flex-row h-auto md:h-48 bg-black border-white/5 hover:border-brand-500/30 transition-all shadow-[0_0_50px_-20px_rgba(0,0,0,1)]" variant="solid">
-                      <div className="md:w-60 h-36 md:h-full relative overflow-hidden bg-zinc-900">
-                        <div className="absolute inset-0 bg-grid opacity-[0.1] z-10" />
-                        
-                        <div className="w-full h-full flex items-center justify-center bg-zinc-950">
-                           {isCompleted ? (
-                              <FileVideo className="w-12 h-12 text-brand-500/50" />
-                           ) : isFailed ? (
-                              <AlertCircle className="w-12 h-12 text-red-500/50" />
-                           ) : (
-                              <Loader2 className="w-12 h-12 text-brand-500/50 animate-spin" />
-                           )}
-                        </div>
-
-                        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent group-hover:from-brand-900/60 transition-colors duration-500 z-10" />
-                        <div className="absolute bottom-4 left-4 z-20">
-                           <div className="flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur-md rounded-lg text-white/70 text-[9px] font-black uppercase tracking-[0.2em] border border-white/10">
-                              <Clock className="w-3.5 h-3.5 text-brand-500" />
-                              <span>{isCompleted ? '15 mins' : isFailed ? 'Aborted' : `${gen.overall_progress || 0}%`}</span>
-                           </div>
-                        </div>
-                      </div>
-                      <div className="flex-1 p-6 flex flex-col justify-center relative">
-                         <span className="text-[8px] text-brand-500 font-black uppercase tracking-[0.4em] mb-2 block">
-                            NODE_{gen.jobId.slice(0, 8).toUpperCase()}
-                         </span>
-                         <h4 className="text-xl font-display font-black text-white mb-2 group-hover:text-brand-400 transition-colors uppercase tracking-tighter leading-none">
-                            {gen.topic}
-                         </h4>
-                         <p className="text-[13px] text-zinc-500 line-clamp-2 max-w-xl leading-relaxed font-medium">
-                            {isCompleted 
-                              ? 'Dynamic video render pipeline executed successfully. Visual representations generated.'
-                              : isFailed
-                              ? `Pipeline execution failed: ${gen.error || 'Unknown compiler error'}`
-                              : `Currently processing stage: ${gen.current_stage || 'initializing'}. Monitoring node link active.`
-                            }
-                         </p>
-                      </div>
-                      <div className="p-6 flex flex-col items-center justify-center gap-2 md:border-l border-white/5 bg-zinc-950/30 min-w-[160px]">
-                         <Button 
-                           variant="primary" 
-                           size="sm" 
-                           icon={isRunning ? Loader2 : Play} 
-                           fullWidth 
-                           className="h-10 text-[9px] font-black uppercase tracking-widest px-4" 
-                           onClick={() => router.push(`/studio/${gen.jobId}`)}
-                         >
-                            {isRunning ? 'Monitor' : 'Stream'}
-                         </Button>
-                         <Button 
-                           variant="outline" 
-                           size="sm" 
-                           icon={FileQuestion} 
-                           fullWidth 
-                           className="h-10 text-[9px] font-black uppercase tracking-widest px-4 border-white/10 text-zinc-600 hover:text-white" 
-                           onClick={() => router.push('/quiz')}
-                           disabled={!isCompleted}
-                         >
-                            Quiz
-                         </Button>
-                      </div>
-                    </Card>
-                  );
-                })}
-              </div>
+    <div className="space-y-8 pb-8">
+      {/* Stats strip */}
+      {!loading && generations.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45 }}
+          className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-ink-800 pb-5"
+        >
+          {[
+            { n: generations.length, label: 'lectures' },
+            { n: done, label: 'ready' },
+            { n: running, label: 'in progress' },
+          ].map((s) => (
+            <div key={s.label} className="flex items-baseline gap-2">
+              <span className="numeric font-display text-[28px] leading-none text-chalk-100">{s.n}</span>
+              <span className="text-[13px] text-chalk-400">{s.label}</span>
             </div>
-          )}
-        </div>
+          ))}
+          <div className="ml-auto">
+            <Button size="sm" variant="outline" icon={Plus} onClick={() => router.push('/')}>
+              New lecture
+            </Button>
+          </div>
+        </motion.div>
+      )}
 
-        <div className="space-y-10">
-           {/* Productivity Card - High Density */}
-           <Card variant="solid" className="py-8 px-8 border-white/10 bg-zinc-950 shadow-2xl relative overflow-hidden" glow="none">
-              <div className="absolute inset-0 bg-blocks opacity-[0.03] pointer-events-none" />
-              <div className="flex items-center justify-between mb-8">
-                 <div className="flex items-center gap-2">
-                    <BarChart3 className="text-brand-500 w-4 h-4 shadow-[0_0_10px_rgba(12,142,233,0.5)]" />
-                    <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-[0.3em]">Core_Analytics</span>
-                 </div>
-                 <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-[9px] text-emerald-500 font-black uppercase tracking-widest">Live</span>
-                 </div>
-              </div>
-              
-              <div className="flex items-baseline justify-center gap-1.5 mb-1.5">
-                 <span className="text-4xl font-display font-black text-white uppercase tracking-tighter">
-                    {generations.filter(g => g.status === 'completed').length}
-                 </span>
-                 <span className="text-zinc-600 text-base font-bold uppercase italic tracking-widest">NOD</span>
-              </div>
-              <p className="text-[9px] text-zinc-600 mb-8 font-bold uppercase tracking-[0.2em] text-center">Stable Constructs In Library</p>
-              
-              <div className="grid grid-cols-2 gap-3">
-                 <div className="p-4 rounded-xl bg-black border border-white/5 text-center">
-                    <div className="text-xl font-display font-black text-white uppercase tracking-tighter">
-                       {generations.length}
-                    </div>
-                    <div className="text-[8px] text-zinc-600 font-black uppercase mt-1.5 tracking-widest">Total Jobs</div>
-                 </div>
-                 <div className="p-4 rounded-xl bg-black border border-white/5 text-center">
-                    <div className="text-xl font-display font-black text-brand-400 uppercase tracking-tighter">
-                       {generations.length > 0 
-                         ? `${Math.round((generations.filter(g => g.status === 'completed').length / generations.length) * 100)}%`
-                         : '0%'
-                       }
-                    </div>
-                    <div className="text-[8px] text-zinc-600 font-black uppercase mt-1.5 tracking-widest">Yield Sync</div>
-                 </div>
-              </div>
-           </Card>
-
-           <Card variant="glass" className="bg-brand-500/5 border-brand-500/10 p-8 relative overflow-hidden group">
-              <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:scale-125 transition-transform duration-700">
-                 <Brain className="w-16 h-16 text-white" />
-              </div>
-              <div className="flex items-center gap-3 mb-6">
-                 <div className="w-8 h-8 rounded-lg bg-brand-500/20 flex items-center justify-center border border-brand-500/30">
-                    <Sparkles className="w-4 h-4 text-brand-400" />
-                 </div>
-                 <h5 className="text-[9px] font-black text-brand-400 uppercase tracking-[0.4em]">Architect_Log</h5>
-              </div>
-               <p className="text-zinc-400 text-[13px] leading-relaxed italic font-medium">
-                 {"\"Neural registers initialized. Dynamic file polling is fully active for all local workspace directories.\""}
-               </p>
-           </Card>
+      {loading ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-[92px] animate-pulse rounded-[var(--radius-card)] border border-ink-800 bg-ink-900/40"
+              style={{ animationDelay: `${i * 120}ms` }}
+            />
+          ))}
         </div>
-      </div>
+      ) : generations.length === 0 ? (
+        <EmptyState
+          icon={Plus}
+          title="Nothing here yet"
+          body="Generate your first lecture and it will show up here, along with its video, scenes and quiz."
+          action={
+            <Button icon={ArrowRight} onClick={() => router.push('/')}>
+              Compose a lecture
+            </Button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="No matches"
+          body={`Nothing in your library matches “${query}”. Try a different search.`}
+        />
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((gen, i) => {
+            const isCompleted = gen.status === 'completed';
+            const isFailed = gen.status === 'failed';
+            const isRunning = !isCompleted && !isFailed;
+            const state = isCompleted ? 'done' : isFailed ? 'failed' : 'running';
+
+            return (
+              <Card
+                key={gen.jobId}
+                delay={i * 0.05}
+                onClick={() => router.push(`/studio/${gen.jobId}`)}
+                className={`group relative overflow-hidden p-4 md:p-5 ${isRunning ? 'sweep-host sweep-always' : ''}`}
+              >
+                <div className="flex items-center gap-4">
+                  <ProgressRing value={gen.overall_progress} state={state} />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <h3 className="truncate font-display text-[21px] leading-tight text-chalk-100 transition-colors group-hover:text-amber-300">
+                        {gen.topic}
+                      </h3>
+                      <StatusBadge status={gen.status} progress={gen.overall_progress} />
+                    </div>
+                    <p className="mt-1 truncate text-[13px] text-chalk-400">
+                      {isCompleted
+                        ? 'Video, scenes and quiz ready'
+                        : isFailed
+                          ? gen.error || 'Pipeline failed'
+                          : `${(gen.current_stage || 'starting').replace(/_/g, ' ')}…`}
+                      <span className="text-chalk-500"> · {relativeTime(gen.created_at)}</span>
+                    </p>
+                  </div>
+
+                  <div className="hidden shrink-0 items-center gap-2 sm:flex">
+                    {isCompleted && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={FileQuestion}
+                        onClick={() => router.push(`/studio/${gen.jobId}/quiz`)}
+                      >
+                        Quiz
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant={isCompleted ? 'primary' : 'secondary'}
+                      icon={isRunning ? Loader2 : Play}
+                      className={isRunning ? '[&>svg]:animate-spin' : ''}
+                      onClick={() => router.push(`/studio/${gen.jobId}`)}
+                    >
+                      {isRunning ? 'Monitor' : isFailed ? 'Details' : 'Watch'}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Hairline progress along the bottom edge for live jobs */}
+                {isRunning && (
+                  <div className="absolute inset-x-0 bottom-0 h-[2px] bg-ink-800">
+                    <motion.div
+                      className="h-full bg-amber-400"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${gen.overall_progress || 0}%` }}
+                      transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

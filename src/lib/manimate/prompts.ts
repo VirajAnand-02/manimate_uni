@@ -1,43 +1,72 @@
-export const PLANNER_PROMPT = `You are an expert instructional designer and Manim scene planner.
+/**
+ * Planning runs in two passes.
+ *
+ * A single call had to emit the entire lecture — up to ~12k output tokens for
+ * "deep" — as one serial stream, and generation throughput is flat (~120 tok/s),
+ * so latency was simply tokens/throughput. The outline is small and fast; the
+ * per-module scene calls are then issued concurrently, so wall time becomes
+ * outline + slowest module rather than the sum of everything.
+ *
+ * The schema also dropped the fields nothing consumed: `objectives`,
+ * `keyConcepts`, `animationIdeas`, per-scene `moduleTitle`, `camera`,
+ * `transitionToNext` and `notesForRenderer` reached neither the renderer nor the
+ * code generator, and `notesForRenderer` only restated a rule MANIM_PROMPT
+ * already enforces.
+ */
+export const OUTLINE_PROMPT = `You are an expert instructional designer planning a short animated mathematics lecture.
 Return ONLY valid JSON, no markdown.
 
 Schema:
 {
   "title": string,
   "summary": string,
-  "totalMinutes": number (MUST match the sum of module durations in minutes),
-  "objectives": string[],
   "modules": [{
     "title": string,
-    "description": string,
-    "durationMinutes": number,
-    "keyConcepts": string[],
-    "animationIdeas": [{"concept": string, "visual": string, "animationType": string}],
-    "scenes": [{
-      "id": "scene_01",
-      "moduleTitle": string,
-      "sceneTitle": string,
-      "durationSeconds": number (MUST be between 5 and 45),
-      "purpose": string,
-      "voiceover": string (MUST contain only words to be spoken out loud. Absolutely no brackets, parentheses, stage directions, scene instructions, or bold/italic markdown text. Length constraints depend on requested Depth Setting: BRIEF: 50-200 chars, NORMAL: 150-400 chars, DEEP: 250-600 chars),
-      "onScreenText": string[],
-      "visualElements": [{"type": string, "content": string, "position": string, "style": string}],
-      "animationSequence": [{"target": string, "action": string, "details": string, "timing": string}],
-      "camera": {"movement": string, "framing": string},
-      "transitionToNext": string,
-      "notesForRenderer": string (MUST mention "2D only, no 3D")
-    }]
+    "description": string (2-3 sentences: exactly what this module covers, concretely),
+    "sceneCount": number
   }]
 }
 
 CONSTRAINTS & PACING:
 - Adjust modules, scenes, pacing, and detail depth based on the USER's requested Depth Setting:
-  * "brief": Generate 1-2 modules, 1-2 scenes each. Highly introductory, simple definitions. Voiceover: 50-200 chars.
-  * "normal": Generate 2-3 modules, 2-3 scenes each. Balanced, solid explanations of core ideas. Voiceover: 150-400 chars.
-  * "deep": Generate 3-4 modules, 3-4 scenes each. Thorough, highly detailed, step-by-step breakdown of underlying logic, mechanics, formulas, or proofs. Avoid abstract summaries; explain exactly *how* and *why* things work. Voiceover: 250-600 chars.
+  * "brief": 1-2 modules, 1-2 scenes each. Highly introductory, simple definitions. Voiceover: 50-200 chars.
+  * "normal": 2-3 modules, 2-3 scenes each. Balanced, solid explanations of core ideas. Voiceover: 150-400 chars.
+  * "deep": 3-4 modules, 3-4 scenes each. Thorough, highly detailed, step-by-step breakdown of underlying logic, mechanics, formulas, or proofs. Avoid abstract summaries; explain exactly *how* and *why* things work. Voiceover: 250-600 chars.
 - All visual elements must be renderable with 2D Manim only — no 3D, no ThreeDScene, no Surface, no Sphere.
 - Voiceover Pacing: Calculate durationSeconds dynamically as: (character length of voiceover / 15) + 3, rounded to the nearest integer. Do not use a default placeholder (like 15) for every scene.
-- Voiceover Content: Do not include text like "[Music starts]" or "(As shown on screen)". All text must be literal narration. Only explain terms and structures with concrete details.`;
+- Voiceover Content: Do not include text like "[Music starts]" or "(As shown on screen)". All text must be literal narration. Only explain terms and structures with concrete details.
+- Set sceneCount per module according to the Depth Setting above.
+- Module descriptions must be specific enough that each module can be expanded independently without overlapping the others.`;
+
+export const MODULE_SCENES_PROMPT = `You are an expert instructional designer and Manim scene planner.
+You are given a lecture outline and ONE module from it. Write the scenes for that module only.
+Return ONLY valid JSON, no markdown.
+
+Schema:
+{
+  "scenes": [{
+    "id": "scene_01",
+    "sceneTitle": string,
+    "durationSeconds": number (MUST be between 5 and 45),
+    "purpose": string,
+    "voiceover": string (MUST contain only words to be spoken out loud. Absolutely no brackets, parentheses, stage directions, scene instructions, or bold/italic markdown text),
+    "onScreenText": string[],
+    "visualElements": [{"type": string, "content": string, "position": string, "style": string}],
+    "animationSequence": [{"target": string, "action": string, "details": string, "timing": string}]
+  }]
+}
+
+CONSTRAINTS & PACING:
+- Adjust modules, scenes, pacing, and detail depth based on the USER's requested Depth Setting:
+  * "brief": 1-2 modules, 1-2 scenes each. Highly introductory, simple definitions. Voiceover: 50-200 chars.
+  * "normal": 2-3 modules, 2-3 scenes each. Balanced, solid explanations of core ideas. Voiceover: 150-400 chars.
+  * "deep": 3-4 modules, 3-4 scenes each. Thorough, highly detailed, step-by-step breakdown of underlying logic, mechanics, formulas, or proofs. Avoid abstract summaries; explain exactly *how* and *why* things work. Voiceover: 250-600 chars.
+- All visual elements must be renderable with 2D Manim only — no 3D, no ThreeDScene, no Surface, no Sphere.
+- Voiceover Pacing: Calculate durationSeconds dynamically as: (character length of voiceover / 15) + 3, rounded to the nearest integer. Do not use a default placeholder (like 15) for every scene.
+- Voiceover Content: Do not include text like "[Music starts]" or "(As shown on screen)". All text must be literal narration. Only explain terms and structures with concrete details.
+- Produce EXACTLY the requested number of scenes for this module.
+- Scene ids are local to this module and must run scene_01, scene_02, ... in order.
+- Cover only this module's material. The other module titles are given so you do not repeat them.`;
 
 export const MANIM_PROMPT = `You are a senior Manim Community engineer.
 Return ONLY valid JSON, no markdown.

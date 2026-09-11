@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Clock, ChevronDown, ChevronUp, Wifi, WifiOff, Settings2, Zap } from 'lucide-react';
-import Card from '../ui/Card';
+import { ArrowRight, ChevronDown, Loader2, Settings2, WifiOff, Wand2 } from 'lucide-react';
 import Button from '../ui/Button';
 import { useRouter } from 'next/navigation';
 import { redirectToLogin } from '@/src/lib/authRedirect';
@@ -14,6 +13,53 @@ interface HealthInfo {
   queued_jobs: number;
   worker_slots: number;
   available_slots: number;
+}
+
+const SUGGESTIONS = [
+  'The Fourier transform, visually',
+  'Why eigenvectors matter',
+  'Bayes’ theorem from scratch',
+  'Gradient descent, step by step',
+];
+
+const fieldClass =
+  'w-full rounded-lg border border-ink-700 bg-ink-900/80 px-3 py-2.5 text-sm text-chalk-200 outline-none transition-colors placeholder:text-chalk-500 hover:border-ink-600 focus:border-amber-400/50';
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="label block">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Toggle({
+  checked, onChange, label, hint,
+}: { checked: boolean; onChange: (v: boolean) => void; label: string; hint: string }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="group flex w-full items-start gap-3 rounded-lg border border-ink-700 bg-ink-900/60 p-3 text-left transition-colors hover:border-ink-600"
+    >
+      <span
+        className={`mt-0.5 flex h-[18px] w-[30px] shrink-0 items-center rounded-full border px-[2px] transition-colors ${
+          checked ? 'border-amber-400/50 bg-amber-400/25' : 'border-ink-600 bg-ink-800'
+        }`}
+      >
+        <motion.span
+          animate={{ x: checked ? 12 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+          className={`h-3 w-3 rounded-full ${checked ? 'bg-amber-400' : 'bg-chalk-500'}`}
+        />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-medium text-chalk-200">{label}</span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-chalk-500">{hint}</span>
+      </span>
+    </button>
+  );
 }
 
 export default function Dashboard() {
@@ -53,6 +99,30 @@ export default function Dashboard() {
       { value: 'qwen/qwen3.8-27b', label: 'Qwen3.8 27B' },
       { value: 'qwen/qwen3.6-27b', label: 'Qwen3.6 27B' },
       { value: 'groq/compound', label: 'Groq Compound' },
+    ],
+    // OpenRouter carries 400+ models; these are a starting shortlist. Anything
+    // from openrouter.ai/models works via the custom "provider/model" field.
+    openrouter: [
+      { value: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5' },
+      { value: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
+      { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
+      { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+      { value: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+      { value: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+    ],
+    // NVIDIA NIM. Ids are "vendor/model" here too. Point NVIDIA_NIM_BASE_URL at
+    // your own container to use a self-hosted NIM instead of the hosted catalogue.
+    // NIM gates models per account, so availability varies — these were each
+    // verified against a live key. Anything else from the catalogue works via
+    // the custom "provider/model" field.
+    nvidia: [
+      { value: 'nvidia/nemotron-3-super-120b-a12b', label: 'Nemotron 3 Super 120B' },
+      { value: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra 550B' },
+      { value: 'nvidia/nemotron-3.5-lightning-30b-a3b', label: 'Nemotron 3.5 Lightning 30B' },
+      { value: 'deepseek-ai/deepseek-v4-pro-0813', label: 'DeepSeek V4 Pro' },
+      { value: 'moonshotai/kimi-k3', label: 'Kimi K3' },
+      { value: 'google/gemma-4-31b-it', label: 'Gemma 4 31B' },
+      { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B' },
     ],
   };
   const [topicDepth, setTopicDepth] = useState<'brief' | 'normal' | 'deep'>('normal');
@@ -109,7 +179,7 @@ export default function Dashboard() {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
       if (res.status === 401) return redirectToLogin();
       if (res.ok) {
@@ -125,278 +195,267 @@ export default function Dashboard() {
     }
   };
 
+  const busy = health ? health.available_slots === 0 : false;
+
   return (
-    <div className="h-full flex items-center justify-center pb-12">
-      {/* Powerful Hero Section - Now Centered and Fixed */}
+    <div className="mx-auto w-full max-w-3xl pb-10">
+      {/* ─── Hero ─────────────────────────────────────────────── */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.8, ease: [0.23, 1, 0.32, 1] }}
-        className="w-full"
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        className="pt-6 text-center md:pt-12"
       >
-        <Card variant="gradient" className="relative group overflow-hidden p-0 border-white/10 bg-zinc-950 shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)]">
-          {/* Blocks background */}
-          <div className="absolute inset-0 bg-blocks opacity-[0.1] pointer-events-none" />
-          
-          <div className="absolute inset-0 bg-gradient-to-r from-brand-950/20 to-transparent mix-blend-overlay" />
-          
-          <div className="absolute bottom-0 right-0 w-[600px] h-[600px] pointer-events-none overflow-hidden opacity-40">
-             <div className="absolute bottom-[-100px] right-[-100px] w-[500px] h-[500px] bg-brand-500/20 blur-[120px] rounded-full animate-pulse" />
+        <span className="inline-flex items-center gap-2 rounded-full border border-ink-700 bg-ink-900/70 px-3 py-1 text-[11px] text-chalk-400">
+          <Wand2 className="h-3 w-3 text-amber-400" />
+          Research · script · render · narrate
+        </span>
+
+        <h1 className="mt-6 text-balance font-display text-[42px] leading-[1.08] text-chalk-100 md:text-[58px]">
+          What should we
+          <span className="relative mx-2 inline-block text-amber-400">
+            explain
+            {/* Hand-drawn underline, traced on entry */}
+            <svg
+              viewBox="0 0 200 12"
+              className="absolute -bottom-1 left-0 w-full text-amber-400/60"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2 8 C 40 2, 70 10, 100 6 C 135 1.5, 165 9, 198 4"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                className="animate-trace"
+                style={{ ['--trace-length' as string]: '210' }}
+              />
+            </svg>
+          </span>
+          today?
+        </h1>
+
+        <p className="mx-auto mt-5 max-w-xl text-balance text-[15px] leading-relaxed text-chalk-400">
+          Name any topic. Manimate researches it, plans a lecture, writes the Manim
+          scenes, renders them, and narrates the result.
+        </p>
+      </motion.div>
+
+      {/* ─── Composer ─────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.55, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+        className="mt-10"
+      >
+        <div className="panel-raised edge-light rounded-[18px] p-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              type="text"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleExecute(); }}
+              placeholder="e.g. How does a Fourier transform actually work?"
+              className="min-w-0 flex-1 bg-transparent px-4 py-3.5 text-[15px] text-chalk-100 outline-none placeholder:text-chalk-500"
+            />
+            <Button
+              size="lg"
+              onClick={handleExecute}
+              disabled={!topic.trim() || isExecuting}
+              icon={isExecuting ? Loader2 : undefined}
+              iconRight={isExecuting ? undefined : ArrowRight}
+              className={isExecuting ? '[&>svg]:animate-spin' : ''}
+            >
+              {isExecuting ? 'Starting' : 'Generate'}
+            </Button>
           </div>
+        </div>
 
-          <div className="relative p-12 md:p-16 max-w-5xl mx-auto text-center md:text-left">
-            <div className="inline-flex items-center gap-3 px-3 py-1.5 bg-white/5 rounded-full border border-white/10 mb-8 backdrop-blur-md">
-               <div className={`w-1.5 h-1.5 rounded-full ${
-                 backendOnline === true
-                   ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]'
-                   : backendOnline === false
-                     ? 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]'
-                     : 'bg-brand-400 shadow-[0_0_10px_rgba(54,169,247,0.8)]'
-               }`} />
-               <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-[0.3em]">
-                 {backendOnline === true ? 'Neural Engine Online' : backendOnline === false ? 'Neural Engine Offline' : 'Checking Status...'}
-               </span>
-            </div>
-            
-            <h2 className="text-5xl md:text-7xl font-display font-black text-white mb-8 leading-[0.9] tracking-tighter">
-              GENERATE <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-400 via-white to-zinc-500">MASTERCLASS</span>.
-            </h2>
-            <p className="text-lg text-zinc-400 mb-12 leading-relaxed max-w-3xl font-medium">
-              Transform raw topics into structured architectural knowledge. High-fidelity video, scripts, and interactive assessments in real-time.
-            </p>
+        {/* Suggestions */}
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {SUGGESTIONS.map((s, i) => (
+            <motion.button
+              key={s}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.2 + i * 0.06 }}
+              onClick={() => setTopic(s)}
+              className="rounded-full border border-ink-700 bg-ink-900/50 px-3 py-1.5 text-[13px] text-chalk-400 transition-colors hover:border-amber-400/40 hover:text-chalk-100"
+            >
+              {s}
+            </motion.button>
+          ))}
+        </div>
+      </motion.div>
 
-            <div className="flex flex-col md:flex-row gap-4 max-w-4xl pt-4">
-              <div className="flex-1 relative group/input">
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-brand-500 to-indigo-500 rounded-xl blur opacity-20 group-focus-within/input:opacity-50 transition-opacity duration-500" />
-                <div className="relative flex items-center">
-                   <Sparkles className="absolute left-6 w-5 h-5 text-brand-500" />
-                   <input
-                     type="text"
-                     placeholder="Command neural architect: e.g. Quantum Entropy"
-                     value={topic}
-                     onChange={(e) => setTopic(e.target.value)}
-                     onKeyDown={(e) => e.key === 'Enter' && handleExecute()}
-                     className="w-full bg-black/80 backdrop-blur-md border border-white/10 py-5 pl-14 pr-6 rounded-xl text-lg text-white placeholder:text-zinc-700 focus:outline-none focus:border-brand-500/50 transition-all font-mono tracking-tight"
-                     disabled={isExecuting}
-                   />
+      {/* ─── Status + advanced toggle ─────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5, delay: 0.3 }}
+        className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-3"
+      >
+        <span className="inline-flex items-center gap-2 text-[13px]">
+          {backendOnline === null ? (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-chalk-500" />
+              <span className="text-chalk-500">Checking renderer…</span>
+            </>
+          ) : backendOnline ? (
+            <>
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal-400 opacity-60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal-400" />
+              </span>
+              <span className="text-chalk-400">
+                {busy ? 'Renderer busy' : 'Renderer ready'}
+                {health && (health.running_jobs > 0 || health.queued_jobs > 0) && (
+                  <span className="numeric ml-1.5 text-chalk-500">
+                    · {health.running_jobs} running · {health.queued_jobs} queued
+                  </span>
+                )}
+              </span>
+            </>
+          ) : (
+            <>
+              <WifiOff className="h-3.5 w-3.5 text-alert-400" />
+              <span className="text-alert-400">Renderer unreachable</span>
+            </>
+          )}
+        </span>
+
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="inline-flex items-center gap-1.5 text-[13px] text-chalk-400 transition-colors hover:text-chalk-100"
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          Options
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform duration-300 ${showAdvanced ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </motion.div>
+
+      {/* ─── Advanced options ─────────────────────────────────── */}
+      <AnimatePresence initial={false}>
+        {showAdvanced && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="panel mt-6 rounded-[var(--radius-card)] p-5 md:p-6">
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Provider">
+                  <select
+                    value={modelProvider}
+                    onChange={(e) => { setModelProvider(e.target.value); setModel(''); }}
+                    className={fieldClass}
+                  >
+                    <option value="">Server default</option>
+                    <option value="mistral">Mistral AI</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Google Gemini</option>
+                    <option value="groq">Groq</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="nvidia">NVIDIA NIM</option>
+                    <option value="custom">Custom…</option>
+                  </select>
+                </Field>
+
+                {modelProvider === 'custom' ? (
+                  <Field label="Model (provider/model)">
+                    <input
+                      type="text"
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="groq/openai/gpt-oss-120b"
+                      className={fieldClass}
+                    />
+                  </Field>
+                ) : (
+                  <Field label="Model">
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      disabled={!modelProvider}
+                      className={`${fieldClass} disabled:opacity-40`}
+                    >
+                      <option value="">{modelProvider ? 'Select a model…' : 'Server default'}</option>
+                      {modelProvider && modelsByProvider[modelProvider]?.map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
+                <Field label="Depth">
+                  <div className="flex gap-1.5 rounded-lg border border-ink-700 bg-ink-900/80 p-1">
+                    {(['brief', 'normal', 'deep'] as const).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setTopicDepth(d)}
+                        className={`relative flex-1 rounded-md px-2 py-1.5 text-[13px] capitalize transition-colors ${
+                          topicDepth === d ? 'text-ink-950' : 'text-chalk-400 hover:text-chalk-200'
+                        }`}
+                      >
+                        {topicDepth === d && (
+                          <motion.span
+                            layoutId="depth-pill"
+                            className="absolute inset-0 rounded-md bg-amber-400"
+                            transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                          />
+                        )}
+                        <span className="relative z-10 font-medium">{d}</span>
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label={`Correction retries — ${maxCorrections}`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={5}
+                    value={maxCorrections}
+                    onChange={(e) => setMaxCorrections(Number(e.target.value))}
+                    className="mt-3 w-full accent-[var(--color-amber-400)]"
+                  />
+                </Field>
+
+                <Field label="Voice">
+                  <input
+                    type="text"
+                    value={ttsVoice}
+                    onChange={(e) => setTtsVoice(e.target.value)}
+                    placeholder="af_heart"
+                    className={fieldClass}
+                  />
+                </Field>
+
+                <div className="space-y-2.5 md:pt-6">
+                  <Toggle
+                    checked={skipWebsearch}
+                    onChange={setSkipWebsearch}
+                    label="Skip web research"
+                    hint="Faster, but the plan relies only on the model’s own knowledge."
+                  />
+                  <Toggle
+                    checked={skipVoiceovers}
+                    onChange={setSkipVoiceovers}
+                    label="Skip narration"
+                    hint="Renders silent video. Much faster end to end."
+                  />
                 </div>
               </div>
-              <Button
-                size="lg"
-                className="px-12 h-16 !text-lg font-black uppercase tracking-[0.2em] bg-gradient-to-r from-white via-zinc-100 to-white !text-black shadow-[0_12px_30px_-10px_rgba(255,255,255,0.7)] ring-2 ring-white/70 hover:brightness-110 hover:ring-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/90"
-                onClick={handleExecute}
-                disabled={isExecuting}
-              >
-                {isExecuting ? 'Synthesizing...' : 'Execute'}
-              </Button>
             </div>
-
-            {/* Advanced Options Toggle */}
-            <div className="max-w-4xl mt-4">
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                className="flex items-center gap-2 text-[10px] text-zinc-500 hover:text-zinc-300 font-bold uppercase tracking-[0.2em] transition-colors py-2 group/adv"
-              >
-                <Settings2 className="w-3.5 h-3.5 group-hover/adv:rotate-90 transition-transform duration-300" />
-                <span>Advanced Pipeline Configuration</span>
-                {showAdvanced ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-
-              <AnimatePresence>
-                {showAdvanced && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-                    className="overflow-hidden"
-                  >
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 pb-2">
-                      {/* LLM Provider Selector */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">LLM Provider</label>
-                        <select
-                          value={modelProvider}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setModelProvider(val);
-                            setModel('');
-                          }}
-                          className="w-full bg-black/60 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-brand-500/50 transition-colors appearance-none cursor-pointer"
-                        >
-                          <option value="">Default (server config)</option>
-                          <option value="mistral">Mistral AI</option>
-                          <option value="openai">OpenAI</option>
-                          <option value="anthropic">Anthropic</option>
-                          <option value="google">Google Gemini</option>
-                          <option value="groq">Groq</option>
-                          <option value="custom">Custom (provider/model)</option>
-                        </select>
-                      </div>
-
-                      {/* LLM Model Selector or Custom Input */}
-                      {modelProvider === 'custom' ? (
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">Custom Model (provider/model)</label>
-                          <input
-                            type="text"
-                            value={customModel}
-                            onChange={(e) => setCustomModel(e.target.value)}
-                            placeholder="e.g. openai/gpt-4o-mini"
-                            className="w-full bg-black/60 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder:text-zinc-700 focus:outline-none focus:border-brand-500/50 transition-colors"
-                          />
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">LLM Model</label>
-                          <select
-                            value={model}
-                            onChange={(e) => setModel(e.target.value)}
-                            disabled={!modelProvider}
-                            className="w-full bg-black/60 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-brand-500/50 transition-colors appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            <option value="">{modelProvider ? 'Select a model...' : 'Default (server config)'}</option>
-                            {modelProvider && modelsByProvider[modelProvider]?.map((m) => (
-                              <option key={m.value} value={m.value}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-
-                      {/* Topic Depth */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">Topic Depth</label>
-                        <select
-                          value={topicDepth}
-                          onChange={(e) => setTopicDepth(e.target.value as any)}
-                          className="w-full bg-black/60 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-brand-500/50 transition-colors appearance-none cursor-pointer"
-                        >
-                          <option value="brief">Brief (shorter, simple concepts)</option>
-                          <option value="normal">Normal (balanced explainer)</option>
-                          <option value="deep">Deep (longer, detailed, advanced concepts)</option>
-                        </select>
-                      </div>
-
-                      {/* TTS Voice */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">TTS Voice</label>
-                        <input
-                          type="text"
-                          value={ttsVoice}
-                          onChange={(e) => setTtsVoice(e.target.value)}
-                          placeholder="af_heart"
-                          className="w-full bg-black/60 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white font-mono placeholder:text-zinc-700 focus:outline-none focus:border-brand-500/50 transition-colors"
-                        />
-                      </div>
-
-                      {/* Max corrections */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.3em]">
-                          Correction Retries ({maxCorrections})
-                        </label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={10}
-                          value={maxCorrections}
-                          onChange={(e) => setMaxCorrections(Number(e.target.value))}
-                          className="w-full accent-brand-500"
-                        />
-                      </div>
-
-                      {/* Toggle: Skip voiceover */}
-                      <label className="flex items-center gap-3 cursor-pointer group/toggle py-2">
-                        <div className="relative">
-                          <input
-                            type="checkbox"
-                            checked={skipVoiceovers}
-                            onChange={(e) => setSkipVoiceovers(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-9 h-5 bg-zinc-800 border border-white/10 rounded-full peer-checked:bg-brand-500/30 peer-checked:border-brand-500/50 transition-all" />
-                          <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-zinc-500 rounded-full peer-checked:translate-x-4 peer-checked:bg-brand-400 transition-all shadow-sm" />
-                        </div>
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] group-hover/toggle:text-zinc-300 transition-colors">
-                          Skip Voiceover
-                        </span>
-                      </label>
-
-                      {/* Toggle: Skip web research */}
-                      <label className="flex items-center gap-3 cursor-pointer group/toggle py-2">
-                        <div className="relative">
-                          <input
-                            type="checkbox"
-                            checked={skipWebsearch}
-                            onChange={(e) => setSkipWebsearch(e.target.checked)}
-                            className="sr-only peer"
-                          />
-                          <div className="w-9 h-5 bg-zinc-800 border border-white/10 rounded-full peer-checked:bg-brand-500/30 peer-checked:border-brand-500/50 transition-all" />
-                          <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-zinc-500 rounded-full peer-checked:translate-x-4 peer-checked:bg-brand-400 transition-all shadow-sm" />
-                        </div>
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em] group-hover/toggle:text-zinc-300 transition-colors">
-                          Skip Web Research
-                        </span>
-                      </label>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-            
-            <div className="mt-16 flex flex-wrap items-center justify-center md:justify-start gap-10 border-t border-white/5 pt-10">
-               <div className="flex -space-x-4">
-                 {[1,2,3,4,5].map(i => (
-                   <div key={i} className="w-10 h-10 rounded-full border-2 border-black bg-zinc-900 overflow-hidden hover:scale-110 transition-transform cursor-pointer ring-2 ring-white/5">
-                     <img src={`https://i.pravatar.cc/100?img=${i+20}`} alt="User" className="grayscale" />
-                   </div>
-                 ))}
-               </div>
-               <div className="space-y-1 border-l border-white/10 pl-10">
-                  <div className="text-xs text-white font-black uppercase tracking-widest leading-none">Architect Cohort</div>
-                  <div className="text-[9px] text-zinc-500 font-extrabold uppercase tracking-[0.3em] leading-none mt-1">4.8k Active Neural Sessions</div>
-               </div>
-               
-               {/* Backend status indicator */}
-               <div className="ml-auto hidden xl:flex items-center gap-4 text-zinc-600 font-mono text-[10px] uppercase tracking-widest">
-                  {backendOnline !== null && (
-                    <div className="flex items-center gap-2">
-                      {backendOnline ? (
-                        <>
-                          <Wifi className="w-3.5 h-3.5 text-emerald-500" />
-                          <span className="text-emerald-500/70">Backend Online</span>
-                        </>
-                      ) : (
-                        <>
-                          <WifiOff className="w-3.5 h-3.5 text-amber-500" />
-                          <span className="text-amber-500/70">Backend Offline</span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {health && backendOnline && (
-                    <>
-                      <div className="w-px h-4 bg-white/5" />
-                      <div className="flex items-center gap-2">
-                        <Zap className="w-3.5 h-3.5" />
-                        <span>{health.running_jobs} running · {health.queued_jobs} queued</span>
-                      </div>
-                    </>
-                  )}
-                  <div className="w-px h-4 bg-white/5" />
-                  <div className="flex items-center gap-2">
-                     <Clock className="w-3.5 h-3.5" />
-                     <span>Uptime: 99.98%</span>
-                  </div>
-                  <div className="w-px h-4 bg-white/5" />
-                  <span>v4.0.0_STABLE</span>
-               </div>
-            </div>
-          </div>
-        </Card>
-      </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

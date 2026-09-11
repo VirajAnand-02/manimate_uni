@@ -1,65 +1,85 @@
+"use client";
+
 import { ReactNode } from 'react';
 import { motion } from 'motion/react';
 import { LucideIcon } from 'lucide-react';
 
 interface ButtonProps {
-  children: ReactNode;
+  children?: ReactNode;
   onClick?: () => void;
   icon?: LucideIcon;
-  variant?: 'primary' | 'secondary' | 'ghost' | 'outline' | 'glass';
+  iconRight?: LucideIcon;
+  variant?: 'primary' | 'secondary' | 'ghost' | 'outline' | 'danger';
   size?: 'sm' | 'md' | 'lg';
   fullWidth?: boolean;
   disabled?: boolean;
+  type?: 'button' | 'submit';
+  title?: string;
   className?: string;
 }
+
+const variants: Record<string, string> = {
+  // The amber marker. One primary action per view.
+  primary:
+    'bg-amber-400 text-ink-950 font-semibold hover:bg-amber-300 shadow-[0_6px_20px_-8px_rgba(247,185,85,0.55)]',
+  secondary:
+    'bg-ink-800 text-chalk-200 border border-ink-600 hover:bg-ink-700 hover:border-ink-500 hover:text-chalk-100',
+  outline:
+    'bg-transparent text-chalk-300 border border-ink-600 hover:border-amber-400/50 hover:text-chalk-100 hover:bg-amber-400/[0.06]',
+  ghost:
+    'bg-transparent text-chalk-400 hover:text-chalk-100 hover:bg-chalk-100/[0.05]',
+  danger:
+    'bg-transparent text-alert-400 border border-alert-500/30 hover:bg-alert-500/10 hover:border-alert-500/50',
+};
+
+const sizes: Record<string, string> = {
+  sm: 'h-8 px-3 text-[13px] gap-1.5 rounded-lg',
+  md: 'h-10 px-4 text-sm gap-2 rounded-lg',
+  lg: 'h-12 px-6 text-[15px] gap-2.5 rounded-xl',
+};
+
+const iconSizes: Record<string, string> = {
+  sm: 'w-3.5 h-3.5',
+  md: 'w-4 h-4',
+  lg: 'w-[18px] h-[18px]',
+};
 
 export default function Button({
   children,
   onClick,
   icon: Icon,
+  iconRight: IconRight,
   variant = 'primary',
   size = 'md',
   fullWidth = false,
   disabled = false,
-  className = ''
+  type = 'button',
+  title,
+  className = '',
 }: ButtonProps) {
-  const baseStyles = "relative inline-flex items-center justify-center font-medium transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl overflow-hidden group";
-  
-  const variants = {
-    primary: "bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/20",
-    secondary: "bg-white/10 hover:bg-white/20 text-white",
-    ghost: "bg-transparent hover:bg-white/5 text-slate-400 hover:text-white",
-    outline: "bg-transparent border border-white/10 hover:border-brand-500/50 text-white hover:bg-brand-500/5",
-    glass: "bg-white/5 backdrop-blur-md border border-white/10 text-white hover:bg-white/10"
-  };
-
-  const sizes = {
-    sm: "px-4 py-2 text-xs gap-1.5",
-    md: "px-6 py-3 text-sm gap-2",
-    lg: "px-8 py-4 text-base gap-3"
-  };
-
   return (
     <motion.button
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.96 }}
+      type={type}
+      title={title}
+      whileHover={disabled ? undefined : { y: -1 }}
+      whileTap={disabled ? undefined : { y: 0, scale: 0.985 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
       onClick={onClick}
       disabled={disabled}
-      className={`
-        ${baseStyles} 
-        ${variants[variant]} 
-        ${sizes[size]} 
-        ${fullWidth ? 'w-full' : ''} 
-        ${className}
-      `}
+      className={[
+        'relative inline-flex items-center justify-center whitespace-nowrap',
+        'transition-colors duration-150',
+        'disabled:opacity-40 disabled:pointer-events-none',
+        variant === 'primary' ? 'sweep-host' : '',
+        variants[variant],
+        sizes[size],
+        fullWidth ? 'w-full' : '',
+        className,
+      ].join(' ')}
     >
-      {/* Animated Shine Effect */}
-      {variant === 'primary' && (
-        <span className="absolute inset-0 w-1/2 h-full skew-x-[-35deg] bg-white/20 -translate-x-[200%] group-hover:translate-x-[300%] transition-transform duration-1000 ease-in-out" />
-      )}
-      
-      {Icon && <Icon className={`${size === 'sm' ? 'w-3.5 h-3.5' : 'w-5 h-5'} relative z-10`} />}
-      <span className="relative z-10">{children}</span>
+      {Icon && <Icon className={`${iconSizes[size]} shrink-0`} />}
+      {children}
+      {IconRight && <IconRight className={`${iconSizes[size]} shrink-0`} />}
     </motion.button>
   );
 }

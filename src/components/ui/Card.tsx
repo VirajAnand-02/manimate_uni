@@ -1,43 +1,52 @@
+"use client";
+
 import { ReactNode, Key } from 'react';
 import { motion } from 'motion/react';
 
 interface CardProps {
   children: ReactNode;
   className?: string;
-  variant?: 'glass' | 'solid' | 'gradient';
-  glow?: 'blue' | 'green' | 'none';
+  variant?: 'panel' | 'raised' | 'quiet' | 'accent';
   onClick?: () => void;
   id?: string;
   key?: Key;
+  /** Adds the hairline highlight along the top edge. On by default. */
+  edge?: boolean;
+  /** Entrance animation delay, in seconds — for staggering a list. */
+  delay?: number;
 }
 
-export default function Card({ children, className = '', variant = 'glass', glow = 'none', onClick, id }: CardProps) {
-  const baseStyles = "rounded-2xl p-6 transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]";
-  
-  const variants = {
-    glass: "bg-zinc-900/40 backdrop-blur-xl border border-white/5 shadow-2xl",
-    solid: "bg-zinc-950 border border-zinc-800/50 shadow-2xl",
-    gradient: "bg-gradient-to-br from-brand-950/40 to-black border border-brand-500/10 shadow-2xl"
-  };
+const variants: Record<string, string> = {
+  panel: 'panel',
+  raised: 'panel-raised',
+  quiet: 'bg-ink-900/50 border border-ink-800',
+  accent: 'bg-amber-400/[0.05] border border-amber-400/20',
+};
 
-  const glows = {
-    blue: "glow-blue",
-    green: "glow-white", // Changed to white for power feel
-    none: ""
-  };
-
+export default function Card({
+  children,
+  className = '',
+  variant = 'panel',
+  onClick,
+  id,
+  edge = true,
+  delay = 0,
+}: CardProps) {
   return (
     <motion.div
-      whileHover={onClick ? { y: -5, scale: 1.01 } : {}}
-      whileTap={onClick ? { scale: 0.98 } : {}}
+      id={id}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, delay, ease: [0.22, 1, 0.36, 1] }}
+      whileHover={onClick ? { y: -3 } : undefined}
       onClick={onClick}
-      className={`
-        ${baseStyles} 
-        ${variants[variant]} 
-        ${glows[glow]} 
-        ${className}
-        ${onClick ? 'cursor-pointer hover:border-white/20' : ''}
-      `}
+      className={[
+        'rounded-[var(--radius-card)] transition-colors duration-200',
+        variants[variant],
+        edge ? 'edge-light' : '',
+        onClick ? 'cursor-pointer hover:border-ink-500' : '',
+        className,
+      ].join(' ')}
     >
       {children}
     </motion.div>

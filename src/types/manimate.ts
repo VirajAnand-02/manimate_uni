@@ -9,7 +9,7 @@ export interface ManimateJobRequest {
 
   // Optional — LLM
   model?: string;
-  model_provider?: 'mistralai' | 'openai' | 'anthropic' | 'google' | 'groq' | '';
+  model_provider?: 'mistralai' | 'openai' | 'anthropic' | 'google' | 'groq' | 'openrouter' | 'nvidia' | '';
   topic_depth?: 'brief' | 'normal' | 'deep';
 
   // Optional — rendering

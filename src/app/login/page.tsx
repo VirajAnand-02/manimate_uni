@@ -2,8 +2,9 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Loader2, LogIn } from 'lucide-react';
+import { Loader2, ArrowRight } from 'lucide-react';
 import { createClient } from '@/src/lib/supabase/browser';
+import BrandMark from '@/src/components/layout/BrandMark';
 
 type Mode = 'signin' | 'signup';
 
@@ -53,77 +54,87 @@ function LoginForm() {
     }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center px-6 bg-black relative">
-      <div className="fixed inset-0 bg-grid opacity-[0.2] pointer-events-none" />
-      <div className="fixed -top-[10%] -right-[10%] w-[60%] h-[60%] bg-brand-600/10 blur-[150px] rounded-full pointer-events-none" />
+  const inputClass =
+    'w-full rounded-lg border border-ink-700 bg-ink-900/80 px-3.5 py-3 text-sm text-chalk-100 outline-none transition-colors placeholder:text-chalk-500 hover:border-ink-600 focus:border-amber-400/50';
 
-      <form
-        onSubmit={submit}
-        className="relative z-10 w-full max-w-sm bg-zinc-950/80 border border-white/10 rounded-2xl p-8 backdrop-blur-xl space-y-6"
-      >
-        <div className="space-y-1">
-          <h1 className="text-2xl font-display font-black text-white uppercase tracking-tighter">
-            Manimate
-          </h1>
-          <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-zinc-600">
-            {mode === 'signin' ? 'Access your constructs' : 'Create an account'}
+  return (
+    <div className="flex min-h-screen items-center justify-center px-6 py-12">
+      <div className="w-full max-w-[400px]">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <span className="text-amber-400">
+            <BrandMark className="h-11 w-11" />
+          </span>
+          <h1 className="mt-4 font-display text-[34px] leading-none text-chalk-100">Manimate</h1>
+          <p className="mt-2 text-sm text-chalk-400">
+            {mode === 'signin' ? 'Sign in to your lectures' : 'Create an account to get started'}
           </p>
         </div>
 
-        <div className="space-y-3">
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            placeholder="you@university.edu"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full bg-zinc-900 border border-white/5 focus:border-brand-500/50 outline-none rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-700 transition-colors"
-          />
-          <input
-            type="password"
-            required
-            minLength={6}
-            autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full bg-zinc-900 border border-white/5 focus:border-brand-500/50 outline-none rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-700 transition-colors"
-          />
-        </div>
+        <form onSubmit={submit} className="panel-raised edge-light space-y-4 rounded-[var(--radius-card)] p-6">
+          <label className="block space-y-1.5">
+            <span className="label block">Email</span>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="you@university.edu"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={inputClass}
+            />
+          </label>
 
-        {error && (
-          <p className="text-xs text-red-400 font-mono leading-relaxed">{error}</p>
-        )}
-        {notice && (
-          <p className="text-xs text-brand-400 font-mono leading-relaxed">{notice}</p>
-        )}
+          <label className="block space-y-1.5">
+            <span className="label block">Password</span>
+            <input
+              type="password"
+              required
+              minLength={6}
+              autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={inputClass}
+            />
+          </label>
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold uppercase tracking-widest py-3 transition-colors"
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-          {mode === 'signin' ? 'Sign in' : 'Sign up'}
-        </button>
+          {error && (
+            <p className="rounded-lg border border-alert-500/30 bg-alert-500/10 px-3 py-2 text-[13px] leading-relaxed text-alert-300">
+              {error}
+            </p>
+          )}
+          {notice && (
+            <p className="rounded-lg border border-signal-500/30 bg-signal-500/10 px-3 py-2 text-[13px] leading-relaxed text-signal-300">
+              {notice}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="sweep-host flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-amber-400 text-sm font-semibold text-ink-950 transition-colors hover:bg-amber-300 disabled:pointer-events-none disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {mode === 'signin' ? 'Sign in' : 'Create account'}
+            {!busy && <ArrowRight className="h-4 w-4" />}
+          </button>
+        </form>
 
         <button
           type="button"
           onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(null); setNotice(null); }}
-          className="w-full text-[10px] font-mono uppercase tracking-widest text-zinc-600 hover:text-zinc-400 transition-colors"
+          className="mt-5 w-full text-[13px] text-chalk-400 transition-colors hover:text-chalk-100"
         >
           {mode === 'signin' ? 'Need an account? Sign up' : 'Already registered? Sign in'}
         </button>
-      </form>
+      </div>
     </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-black" />}>
+    <Suspense fallback={<div className="min-h-screen" />}>
       <LoginForm />
     </Suspense>
   );

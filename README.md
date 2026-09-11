@@ -6,7 +6,7 @@ Manimate Uni is an agentic Next.js application that translates educational topic
 
 ## 🚀 Key Features
 
-* **Multi-LLM Provider Engine (Vercel AI SDK)**: Supports OpenAI, Anthropic, Google Gemini, Mistral AI, and Groq. Includes dynamic model presets, custom `provider/model` overrides, and round-robin key rotation per provider.
+* **Multi-LLM Provider Engine (Vercel AI SDK)**: Supports OpenAI, Anthropic, Google Gemini, Mistral AI, Groq, OpenRouter (one key, 400+ models), and NVIDIA NIM (hosted or self-hosted). Includes dynamic model presets, custom `provider/model` overrides, and round-robin key rotation per provider.
 * **Local Subprocess Pipeline**: Executes the Python compiler to run Manim CLI renders and FFMPEG to mux voiceovers and stitch scenes.
 * **Self-Correcting Rendering Loop**: If the LLM generates Manim code that fails to compile, the pipeline captures the traceback, invokes the corrector LLM, and repairs the script on the fly (up to 3 retries).
 * **Dynamic Scene Pacing**: Calculates scene durations from voiceover length ($\text{duration} = \lceil\text{chars} / 15\rceil + 3$ seconds) to avoid silent pauses or frozen video tracks.
@@ -84,7 +84,7 @@ cp .env.example .env.local
 Fill in `.env.local`:
 
 * **Supabase**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-* **At least one LLM provider**: `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or `GROQ_API_KEY`.
+* **At least one LLM provider**: `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, or `NVIDIA_API_KEY`.
 * **Python**: `MANIM_PYTHON` — the absolute path to your venv interpreter (`manim-env/Scripts/python.exe` on Windows, `manim-env/bin/python` elsewhere).
 * **Scratch dir**: `MANIMATE_WORK_DIR` — defaults to a `manimate` folder in your system temp dir.
 

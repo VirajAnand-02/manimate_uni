@@ -3,18 +3,15 @@ import '../index.css';
 import AppShell from '../components/layout/AppShell';
 
 export const metadata: Metadata = {
-  title: 'MANIMATE — Neural Architect',
-  description: 'Transform raw topics into structured architectural knowledge. High-fidelity video, scripts, and interactive assessments in real-time.',
+  title: 'Manimate — Lecture Engine',
+  description:
+    'Turn any topic into a narrated, animated mathematical lecture: researched, planned, rendered with Manim, and voiced — end to end.',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-black text-zinc-300 antialiased font-sans">
+      <body className="bg-ink-950 font-sans text-chalk-300 antialiased">
         <AppShell>{children}</AppShell>
       </body>
     </html>

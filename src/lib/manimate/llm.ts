@@ -4,7 +4,8 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createGroq } from '@ai-sdk/groq';
-import { CORRECTION_PROMPT, MANIM_PROMPT, PLANNER_PROMPT, QUIZ_PROMPT } from './prompts';
+import { CORRECTION_PROMPT, MANIM_PROMPT, MODULE_SCENES_PROMPT, OUTLINE_PROMPT, QUIZ_PROMPT } from './prompts';
+import { llmConcurrency, pool } from './concurrency';
 
 type ChatMessage = { role: 'system' | 'user'; content: string };
 
@@ -30,10 +31,31 @@ function getKeysForProvider(provider: string): string[] {
   } else if (p === 'groq') {
     envKeys = process.env.GROQ_API_KEYS || '';
     envKey = process.env.GROQ_API_KEY || '';
+  } else if (p === 'openrouter') {
+    envKeys = process.env.OPENROUTER_API_KEYS || '';
+    envKey = process.env.OPENROUTER_API_KEY || '';
+  } else if (p === 'nvidia') {
+    envKeys = process.env.NVIDIA_API_KEYS || '';
+    envKey = process.env.NVIDIA_API_KEY || '';
   }
   
   const raw = [envKeys, envKey].join(',');
   return [...new Set(raw.split(',').map((key) => key.trim()).filter(Boolean))];
+}
+
+/**
+ * Keys that answered 401/403. A revoked key in a rotation list is otherwise
+ * drawn again every Nth call, and each draw costs a failed request plus a
+ * backoff sleep — which got worse once planning started issuing one call per
+ * module instead of one per lecture.
+ */
+const deadKeys = new Set<string>();
+
+export function markKeyDead(provider: string, key: string) {
+  deadKeys.add(`${provider.toLowerCase()}::${key}`);
+  console.warn(
+    `[llm] ${provider} key ending "${key.slice(-4)}" was rejected and has been dropped from rotation for this process.`,
+  );
 }
 
 function nextKeyForProvider(provider: string): string {
@@ -42,8 +64,13 @@ function nextKeyForProvider(provider: string): string {
     throw new Error(`No API key configured for provider "${provider}". Please set ${provider.toUpperCase()}_API_KEY or ${provider.toUpperCase()}_API_KEYS in your environment.`);
   }
   const indexKey = provider.toLowerCase();
+  // Every key rejected: fall back to the full list so the caller still gets a
+  // real provider error rather than a confusing "no key configured".
+  const live = all.filter((k) => !deadKeys.has(`${indexKey}::${k}`));
+  const usable = live.length ? live : all;
+
   const currentIndex = keyIndices[indexKey] || 0;
-  const key = all[currentIndex % all.length];
+  const key = usable[currentIndex % usable.length];
   keyIndices[indexKey] = currentIndex + 1;
   return key;
 }
@@ -63,13 +90,58 @@ export function resolveProviderAndModel(requestProvider?: string, requestModel?:
   }
 
   if (provider === 'mistralai') provider = 'mistral';
+  if (provider === 'nim' || provider === 'nvidia-nim') provider = 'nvidia';
   
   return { provider, model };
 }
 
+/**
+ * Gateways that speak the OpenAI wire format.
+ *
+ * Neither needs a provider package of its own: @ai-sdk/openai-compatible and the
+ * community OpenRouter provider both sit on @ai-sdk/provider v4, which this
+ * install (ai@6, provider v3) cannot load.
+ *
+ * `.chat()` is required. The default export targets OpenAI's /responses
+ * endpoint, which neither gateway implements — only /chat/completions.
+ */
+function openAICompatible(
+  apiKey: string,
+  modelName: string,
+  baseURL: string,
+  headers?: Record<string, string>,
+) {
+  return createOpenAI({ apiKey, baseURL, headers }).chat(modelName);
+}
+
+/**
+ * NIM is also self-hostable — the whole point of the product — so the endpoint
+ * is configurable rather than hardcoded to NVIDIA's hosted catalogue.
+ */
+function nvidiaBaseUrl() {
+  return (process.env.NVIDIA_NIM_BASE_URL?.trim() || 'https://integrate.api.nvidia.com/v1').replace(/\/+$/, '');
+}
+
+/**
+ * Optional attribution headers. OpenRouter uses them to credit traffic to your
+ * app on its public leaderboards; both are safe to omit.
+ */
+function openRouterHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const site = process.env.OPENROUTER_SITE_URL?.trim();
+  const title = process.env.OPENROUTER_APP_NAME?.trim();
+  if (site) headers['HTTP-Referer'] = site;
+  if (title) headers['X-Title'] = title;
+  return headers;
+}
+
 function getAIModel(provider: string, modelName: string) {
   const apiKey = nextKeyForProvider(provider);
-  
+  const model = buildModel(provider, modelName, apiKey);
+  return { model, apiKey };
+}
+
+function buildModel(provider: string, modelName: string, apiKey: string) {
   switch (provider) {
     case 'mistral':
       return createMistral({ apiKey })(modelName);
@@ -81,8 +153,12 @@ function getAIModel(provider: string, modelName: string) {
       return createGoogleGenerativeAI({ apiKey })(modelName);
     case 'groq':
       return createGroq({ apiKey })(modelName);
+    case 'openrouter':
+      return openAICompatible(apiKey, modelName, 'https://openrouter.ai/api/v1', openRouterHeaders());
+    case 'nvidia':
+      return openAICompatible(apiKey, modelName, nvidiaBaseUrl());
     default:
-      throw new Error(`Unsupported LLM provider: "${provider}". Supported providers are: mistral, openai, anthropic, google, groq.`);
+      throw new Error(`Unsupported LLM provider: "${provider}". Supported providers are: mistral, openai, anthropic, google, groq, openrouter, nvidia.`);
   }
 }
 
@@ -126,6 +202,28 @@ function extractJson(text: string) {
   return stripped.slice(start);
 }
 
+/**
+ * Reasoning budget for models that think before answering.
+ *
+ * The gpt-oss family spends most of its output on hidden reasoning — measured at
+ * 920 of 1262 tokens for a lecture outline on gpt-oss-20b. Since this stage is
+ * output-token bound, capping that is the single biggest lever on those models,
+ * and the structured output is unchanged at "low".
+ *
+ * Namespaced per provider, so sending it to a provider that ignores reasoning is
+ * harmless. Unset means the provider's own default.
+ */
+function reasoningOptions() {
+  const effort = process.env.LLM_REASONING_EFFORT?.trim().toLowerCase();
+  if (!effort || !['low', 'medium', 'high'].includes(effort)) return {};
+  return {
+    providerOptions: {
+      groq: { reasoningEffort: effort },
+      openai: { reasoningEffort: effort },
+    },
+  };
+}
+
 export async function aiSdkChat(
   provider: string,
   modelName: string,
@@ -141,9 +239,11 @@ export async function aiSdkChat(
     const abort = () => controller.abort();
     options.signal?.addEventListener('abort', abort, { once: true });
     
+    let usedKey = '';
     try {
-      const modelInstance = getAIModel(provider, modelName);
-      
+      const { model: modelInstance, apiKey } = getAIModel(provider, modelName);
+      usedKey = apiKey;
+
       const res = await generateText({
         model: modelInstance,
         messages: messages.map(m => ({
@@ -152,6 +252,7 @@ export async function aiSdkChat(
         })),
         temperature: 0.2,
         output: options.json ? Output.json() : undefined,
+        ...reasoningOptions(),
         abortSignal: controller.signal,
       });
 
@@ -161,8 +262,17 @@ export async function aiSdkChat(
     } catch (error) {
       lastError = error;
       if (options.signal?.aborted) throw new Error('Job cancelled');
+
+      // A rejected key is retired rather than retried: the next attempt draws a
+      // different one, so there is nothing to back off from either.
+      const status = (error as { statusCode?: number })?.statusCode;
+      const authFailure = status === 401 || status === 403;
+      if (authFailure && usedKey) markKeyDead(provider, usedKey);
+
       if (attempt === maxRetries - 1) break;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(2000 * (attempt + 1), 8000)));
+      if (!authFailure) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2000 * (attempt + 1), 8000)));
+      }
     } finally {
       clearTimeout(timeout);
       options.signal?.removeEventListener('abort', abort);
@@ -172,6 +282,15 @@ export async function aiSdkChat(
   throw lastError instanceof Error ? lastError : new Error('AI SDK request failed.');
 }
 
+/**
+ * Plan the lecture in two passes: a small outline, then every module's scenes
+ * generated concurrently.
+ *
+ * Planning is output-token bound — throughput is flat, so latency tracks the
+ * number of tokens emitted serially. One call for the whole lecture meant "deep"
+ * spent a minute and a half streaming a single JSON document. Now only the
+ * outline is serial; the modules overlap.
+ */
 export async function generateLecturePlan(
   topic: string,
   depth: string,
@@ -179,16 +298,77 @@ export async function generateLecturePlan(
   llmOptions: { provider: string; model: string },
   signal?: AbortSignal,
 ) {
-  const content = await aiSdkChat(
+  const context = webContext ? `WEB RESEARCH CONTEXT:
+${webContext}` : 'No web research context available.';
+
+  const outlineRaw = await aiSdkChat(
     llmOptions.provider,
     llmOptions.model,
     [
-      { role: 'system', content: PLANNER_PROMPT },
-      { role: 'user', content: `Topic: ${topic}\nDepth Setting: ${depth}\n\n${webContext ? `WEB RESEARCH CONTEXT:\n${webContext}` : 'No web research context available.'}` },
+      { role: 'system', content: OUTLINE_PROMPT },
+      { role: 'user', content: `Topic: ${topic}
+Depth Setting: ${depth}
+
+${context}` },
     ],
-    { json: true, signal }
+    { json: true, signal },
   );
-  return JSON.parse(extractJson(content));
+  const outline = JSON.parse(extractJson(outlineRaw));
+
+  const modules: any[] = Array.isArray(outline.modules) ? outline.modules : [];
+  if (!modules.length) throw new Error('Lecture planner returned no modules.');
+
+  const moduleTitles = modules.map((m: any) => String(m?.title || 'Untitled'));
+
+  const results = await pool(modules, llmConcurrency(), async (module: any, index: number) => {
+    const sceneCount = Math.max(1, Math.min(6, Number(module?.sceneCount) || 2));
+    const raw = await aiSdkChat(
+      llmOptions.provider,
+      llmOptions.model,
+      [
+        { role: 'system', content: MODULE_SCENES_PROMPT },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            lectureTitle: outline.title,
+            depthSetting: depth,
+            allModuleTitles: moduleTitles,
+            thisModuleIndex: index + 1,
+            thisModule: { title: module?.title, description: module?.description },
+            sceneCount,
+          }),
+        },
+      ],
+      { json: true, signal },
+    );
+    const parsed = JSON.parse(extractJson(raw));
+    return Array.isArray(parsed?.scenes) ? parsed.scenes : [];
+  });
+
+  // A module whose scenes failed is dropped rather than failing the lecture;
+  // the pipeline only needs at least one renderable scene.
+  const planned = modules.map((module: any, i: number) => ({
+    title: module?.title,
+    description: module?.description,
+    durationMinutes: Number(module?.durationMinutes) || undefined,
+    scenes: results[i]?.ok ? results[i].value : [],
+  })).filter((module) => module.scenes.length > 0);
+
+  if (!planned.length) {
+    const firstError = results.find((r) => !r.ok)?.error;
+    throw new Error(
+      `Lecture planner produced no scenes. First error: ${
+        firstError instanceof Error ? firstError.message : 'unknown'
+      }`,
+    );
+  }
+
+  return {
+    title: outline.title,
+    summary: outline.summary,
+    totalMinutes: outline.totalMinutes,
+    modules: planned,
+  };
 }
 
 export async function generateManimForModule(
