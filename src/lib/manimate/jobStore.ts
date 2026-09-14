@@ -281,6 +281,23 @@ async function updateStageFallback(
   if (error) throw new Error(`Could not update stage ${name} on ${jobId}: ${error.message}`);
 }
 
+/**
+ * Heartbeat: proves the job is still owned by a live process.
+ *
+ * Progress ticks already touch updated_at, but a single batched module can
+ * render for minutes without one — and the reaper uses staleness to tell an
+ * orphaned job from one running elsewhere, so the gaps have to stay bounded.
+ * Scoped to still-active rows so it can never resurrect a finished job.
+ */
+export async function touchJob(jobId: string, client?: SupabaseClient) {
+  const { error } = await db(client)
+    .from(TABLE)
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', jobId)
+    .in('status', ['pending', 'queued', 'running']);
+  if (error) console.warn(`[jobStore] heartbeat failed for ${jobId}: ${error.message}`);
+}
+
 export function computeOverallProgress(stages: Record<StageName, LocalStageProgress>) {
   let total = 0;
   for (const name of STAGE_NAMES) {

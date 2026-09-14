@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import type { ManimateJobRequest } from '@/src/types/manimate';
 import { finishActiveJob, startActiveJob } from './activeJobs';
-import { completeJob, patchMetadata, updateStage, writeLecturePlan, finishJob } from './jobStore';
+import { completeJob, patchMetadata, touchJob, updateStage, writeLecturePlan, finishJob } from './jobStore';
 import { fetchWebResearch } from './webResearch';
 import { generateLecturePlan, generateManimForModule, resolveProviderAndModel } from './llm';
 import {
@@ -21,6 +21,12 @@ import { createLimiter, llmConcurrency, pool, renderConcurrency, ttsConcurrency 
 
 /** Progress `detail.log` arrays are rewritten on every tick; keep them bounded. */
 const MAX_LOG_LINES = 200;
+
+/**
+ * How often a running job proves it is still alive. Well under the reaper's
+ * staleness window, so a healthy render is never mistaken for an orphan.
+ */
+const HEARTBEAT_MS = 30 * 1000;
 
 function tailLog(lines: string[]) {
   if (lines.length <= MAX_LOG_LINES) return lines;
@@ -116,6 +122,11 @@ export async function runPipeline(
   const baseDir = jobWorkDir(jobId);
   const active = startActiveJob(jobId);
   let acquired = false;
+
+  // Starts before the queue wait: a job can sit queued for a long time, and a
+  // queued row is just as reapable as a running one.
+  const heartbeat = setInterval(() => { void touchJob(jobId); }, HEARTBEAT_MS);
+  heartbeat.unref?.();
 
   try {
     await acquireJobSlot();
@@ -447,6 +458,7 @@ export async function runPipeline(
     await finishJob(jobId, 'failed', message);
     throw error;
   } finally {
+    clearInterval(heartbeat);
     if (acquired) releaseJobSlot();
     finishActiveJob(jobId);
     // Scratch only — the video and scene code now live in Supabase Storage.

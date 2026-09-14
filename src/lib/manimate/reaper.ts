@@ -2,32 +2,48 @@ import 'server-only';
 import { adminClient } from '@/src/lib/supabase/admin';
 
 /**
- * Fail jobs that were mid-render when the process died.
+ * How long a job may go without a heartbeat before it is considered orphaned.
  *
- * Renders run as a detached promise inside this one container, so any row still
- * pending/running at boot was orphaned by a restart or crash. Without this they
- * stay "running" forever and the Studio page polls them every 2s indefinitely.
+ * Must comfortably exceed HEARTBEAT_MS in the pipeline; the gap absorbs a slow
+ * database write or a long render tick without declaring a healthy job dead.
  */
-export async function reapOrphanedJobs() {
+const STALE_AFTER_MS = 3 * 60 * 1000;
+
+/**
+ * Fail jobs whose owning process died.
+ *
+ * This used to fail *every* pending/queued/running row at boot, on the
+ * assumption that a single always-on instance was the only thing writing to the
+ * table. That stopped being true the moment a local dev server and a deployed
+ * container shared one Supabase project: each boot killed the other's in-flight
+ * render, and in dev merely editing next.config.ts was enough to do it.
+ *
+ * A live job heartbeats; an orphaned one goes silent. So staleness is the signal,
+ * not status — and because a freshly orphaned job is not yet stale, this runs on
+ * a sweep rather than only at boot.
+ */
+export async function reapStaleJobs() {
   try {
+    const cutoff = new Date(Date.now() - STALE_AFTER_MS).toISOString();
     const { data, error } = await adminClient()
       .from('jobs')
       .update({
         status: 'failed',
         current_stage: null,
-        error: 'Interrupted by a server restart. Please run this generation again.',
+        error: 'Generation stopped responding — the server restarted or the render crashed. Please run it again.',
         finished_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .in('status', ['pending', 'queued', 'running'])
+      .lt('updated_at', cutoff)
       .select('id');
 
     if (error) {
-      console.error('[reaper] could not reap orphaned jobs:', error.message);
+      console.error('[reaper] could not reap stale jobs:', error.message);
       return 0;
     }
     const count = data?.length ?? 0;
-    if (count) console.log(`[reaper] failed ${count} job(s) orphaned by a restart`);
+    if (count) console.log(`[reaper] failed ${count} stale job(s) (no heartbeat for ${STALE_AFTER_MS / 60000}m)`);
     return count;
   } catch (err) {
     // Never let a bad/absent Supabase config stop the server from booting.

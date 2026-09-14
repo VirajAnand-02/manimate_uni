@@ -47,6 +47,16 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 # containing server.js plus only the dependencies file tracing actually found.
 RUN npm run build
 
+# onnxruntime-node ships prebuilt binaries for every platform it supports —
+# 536MB, of which ~133MB is darwin and win32 and useless in a Linux container.
+# Pruned here rather than in the runtime stage: deleting files in a later layer
+# does not reclaim the space, it only adds a whiteout.
+RUN P=$(node -p "process.platform") && A=$(node -p "process.arch") \
+    && cd .next/standalone/node_modules/onnxruntime-node/bin/napi-v3 \
+    && find . -mindepth 1 -maxdepth 1 -type d ! -name "$P" -exec rm -rf {} + \
+    && find "$P" -mindepth 1 -maxdepth 1 -type d ! -name "$A" -exec rm -rf {} + \
+    && echo "kept onnxruntime binaries for $P/$A"
+
 # ~300MB pulled from HuggingFace on first use. Baking them in keeps the first
 # render from stalling (or failing outright on a host without egress to HF).
 ENV HF_HOME=/opt/hf-cache
@@ -76,7 +86,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Renders execute LLM-generated Python. Run as an unprivileged user so the
+# container boundary is doing real work. Created before the COPYs so ownership
+# can be set as files land — `chown -R /app` afterwards would duplicate the
+# entire ~800MB tree into a second layer.
+RUN useradd --create-home --uid 10001 manimate \
+    && mkdir -p /var/tmp/manimate \
+    && chown manimate:manimate /var/tmp/manimate
+
 ENV MANIM_PYTHON=/opt/manim-env/bin/python
+# Left root-owned: executed, never written to.
 COPY --from=pybuild /opt/manim-env /opt/manim-env
 
 WORKDIR /app
@@ -86,7 +105,9 @@ WORKDIR /app
 # public/ directory in this project; add a COPY for it if one is ever created.)
 COPY --from=nodebuild /app/.next/standalone ./
 COPY --from=nodebuild /app/.next/static ./.next/static
-COPY --from=nodebuild /opt/hf-cache /opt/hf-cache
+# transformers writes into its cache directory at runtime, so this one is owned
+# by the runtime user.
+COPY --from=nodebuild --chown=manimate:manimate /opt/hf-cache /opt/hf-cache
 
 # scripts/ is not part of the traced bundle but prewarm-tts.mjs is useful for
 # re-warming the cache by hand on a running container.
@@ -99,11 +120,6 @@ ENV NODE_ENV=production \
     MANIMATE_WORK_DIR=/var/tmp/manimate \
     MANIM_QUALITY=-qm
 
-# Renders execute LLM-generated Python. Run as an unprivileged user so the
-# container boundary is doing real work.
-RUN useradd --create-home --uid 10001 manimate \
-    && mkdir -p /var/tmp/manimate \
-    && chown -R manimate:manimate /var/tmp/manimate /opt/hf-cache /app
 USER manimate
 
 EXPOSE 3000
