@@ -59,8 +59,13 @@ RUN P=$(node -p "process.platform") && A=$(node -p "process.arch") \
 
 # ~300MB pulled from HuggingFace on first use. Baking them in keeps the first
 # render from stalling (or failing outright on a host without egress to HF).
-ENV HF_HOME=/opt/hf-cache
-RUN mkdir -p $HF_HOME && node scripts/prewarm-tts.mjs
+#
+# MANIMATE_MODEL_CACHE, not HF_HOME: @huggingface/transformers v3 ignores HF_HOME
+# entirely and defaults to a .cache directory inside its own node_modules folder,
+# so the previous build wrote the weights somewhere the runtime image never
+# copied — and the app then tried to re-download into a read-only path.
+ENV MANIMATE_MODEL_CACHE=/opt/model-cache
+RUN node scripts/prewarm-tts.mjs && test -d /opt/model-cache && du -sh /opt/model-cache
 
 
 # ─── Stage 3: runtime ────────────────────────────────────────────────
@@ -105,9 +110,9 @@ WORKDIR /app
 # public/ directory in this project; add a COPY for it if one is ever created.)
 COPY --from=nodebuild /app/.next/standalone ./
 COPY --from=nodebuild /app/.next/static ./.next/static
-# transformers writes into its cache directory at runtime, so this one is owned
-# by the runtime user.
-COPY --from=nodebuild --chown=manimate:manimate /opt/hf-cache /opt/hf-cache
+# transformers writes into its cache directory at runtime (it checks for updates
+# even on a warm cache), so this one is owned by the runtime user.
+COPY --from=nodebuild --chown=manimate:manimate /opt/model-cache /opt/model-cache
 
 # scripts/ is not part of the traced bundle but prewarm-tts.mjs is useful for
 # re-warming the cache by hand on a running container.
@@ -116,7 +121,7 @@ COPY --from=nodebuild /app/scripts ./scripts
 ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0 \
-    HF_HOME=/opt/hf-cache \
+    MANIMATE_MODEL_CACHE=/opt/model-cache \
     MANIMATE_WORK_DIR=/var/tmp/manimate \
     MANIM_QUALITY=-qm
 
